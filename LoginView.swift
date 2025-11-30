@@ -8,55 +8,6 @@
 import SwiftUI
 import SafariServices
 
-// MARK: - Poppins Font Extension (if PoppinsFont.swift is not in target)
-extension Font {
-    static func poppins(_ weight: PoppinsWeight = .regular, size: CGFloat) -> Font {
-        let fontName: String
-        switch weight {
-        case .regular:
-            fontName = "Poppins-Regular"
-        case .medium:
-            fontName = "Poppins-Medium"
-        case .semibold:
-            fontName = "Poppins-SemiBold"
-        case .bold:
-            fontName = "Poppins-Bold"
-        }
-        
-        // Check if font is available, fallback to system font if not
-        if UIFont(name: fontName, size: size) != nil {
-            return Font.custom(fontName, size: size)
-        } else {
-            // Fallback to system font with equivalent weight
-            let systemWeight: Font.Weight
-            switch weight {
-            case .regular:
-                systemWeight = .regular
-            case .medium:
-                systemWeight = .medium
-            case .semibold:
-                systemWeight = .semibold
-            case .bold:
-                systemWeight = .bold
-            }
-            return Font.system(size: size, weight: systemWeight)
-        }
-    }
-    
-    enum PoppinsWeight {
-        case regular
-        case medium
-        case semibold
-        case bold
-    }
-}
-
-extension View {
-    func poppins(_ weight: Font.PoppinsWeight = .regular, size: CGFloat = 16) -> some View {
-        self.font(.poppins(weight, size: size))
-    }
-}
-
 // MARK: - Safari View Controller Wrapper for Login
 struct LoginSafariView: UIViewControllerRepresentable {
     let url: URL
