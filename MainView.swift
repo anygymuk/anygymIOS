@@ -125,6 +125,8 @@ struct GymDetail: Codable {
     let amenities: [String]?
     let description: String?
     let openingHours: [String]?
+    let rating: Double?
+    let ratingsCount: Int?
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -143,6 +145,8 @@ struct GymDetail: Codable {
         case amenities
         case description
         case openingHours = "opening_hours"
+        case rating
+        case ratingsCount = "rating_count"
     }
     
     // Computed property to get logo URL from either flat or nested structure
@@ -556,6 +560,7 @@ struct GymMapView: UIViewRepresentable {
     var selectedGymId: Int? // Selected gym to exclude from clustering
     var onGymSelected: ((Int) -> Void)?
     var onClusterTapped: (() -> Void)? // Handler for cluster taps
+    var panelOpen: Bool = false // Whether the gym detail panel is open
     
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -574,6 +579,14 @@ struct GymMapView: UIViewRepresentable {
     }
     
     func updateUIView(_ mapView: MKMapView, context: Context) {
+        // Set edge insets when panel is open to account for visible map area
+        if panelOpen {
+            let panelHeight = UIScreen.main.bounds.height * 0.7
+            mapView.layoutMargins = UIEdgeInsets(top: 0, left: 0, bottom: panelHeight, right: 0)
+        } else {
+            mapView.layoutMargins = UIEdgeInsets.zero
+        }
+        
         // Update region if it changed significantly
         let currentCenter = mapView.region.center
         let newCenter = region.center
@@ -1022,6 +1035,7 @@ struct FindGymsView: View {
     @State private var showGymDetail = false
     @State private var activePassExpanded = false
     @State private var activePassDragOffset: CGFloat = 0
+    @State private var showActivePassPanel = true
     var onNavigateToPasses: (() -> Void)? = nil
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 54.5, longitude: -2.0), // UK center
@@ -1168,7 +1182,6 @@ struct FindGymsView: View {
                 onGymSelected: { gymId in
                     selectedGymId = gymId
                     gymDetailService.fetchGymDetail(gymId: gymId)
-                    showGymDetail = true
                     
                     // Center and zoom to selected gym (zoom level 13 - street level)
                     if let gym = displayGyms.first(where: { $0.id == gymId }),
@@ -1180,10 +1193,16 @@ struct FindGymsView: View {
                             )
                         }
                     }
+                    
+                    // Show detail panel after a brief delay to allow map to center first
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showGymDetail = true
+                    }
                 },
                 onClusterTapped: {
                     // Cluster was tapped, zoom will be handled in the map delegate
-                }
+                },
+                panelOpen: showGymDetail
             )
             .ignoresSafeArea()
             .blur(radius: showSearchOverlay ? 5 : 0)
@@ -1267,6 +1286,10 @@ struct FindGymsView: View {
                         onNavigateToPasses: onNavigateToPasses
                     )
                     .environmentObject(authManager)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
                 } else if gymDetailService.isLoading {
                     // Loading state
                     VStack {
@@ -1283,17 +1306,20 @@ struct FindGymsView: View {
                         .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: -5)
                         .frame(maxHeight: UIScreen.main.bounds.height * 0.3)
                     }
-                    .transition(.move(edge: .bottom))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: showGymDetail)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
                 }
             }
             
             // Active Pass Bottom Sheet
-            if let activePass = passService.activePass, !showGymDetail {
+            if let activePass = passService.activePass, !showGymDetail, showActivePassPanel {
                 ActivePassBottomSheet(
                     pass: activePass,
                     isExpanded: $activePassExpanded,
-                    dragOffset: $activePassDragOffset
+                    dragOffset: $activePassDragOffset,
+                    isPresented: $showActivePassPanel
                 )
             }
         }
@@ -1319,6 +1345,17 @@ struct FindGymsView: View {
                 passService.fetchActivePass(auth0Id: auth0Id)
             }
         }
+        .onChange(of: passService.activePass) { newActivePass in
+            // Show panel when a new active pass is detected, always keep it visible
+            if newActivePass != nil {
+                showActivePassPanel = true
+                activePassExpanded = false
+                activePassDragOffset = 0
+            } else {
+                // Only hide if there's no active pass
+                showActivePassPanel = false
+            }
+        }
         .onChange(of: gymService.gyms) { newGyms in
             print("Gyms updated in FindGymsView: \(newGyms.count) gyms")
             // Update search service with initial gyms for tier extraction
@@ -1340,6 +1377,52 @@ struct FindGymsView: View {
         .onChange(of: hasSearched) { _ in
             // Update display gyms when search state changes
             updateDisplayGyms()
+        }
+        .onChange(of: showGymDetail) { isShowing in
+            // Recenter map when panel opens or closes
+            if let gymId = selectedGymId,
+               let gym = displayGyms.first(where: { $0.id == gymId }),
+               let coord = gym.coordinate {
+                
+                // Use a delay to ensure the panel animation has started and map view has updated
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    if isShowing {
+                        // Panel is opening: center gym in the visible map area (top 30% of screen)
+                        // Panel covers 70% from bottom, so visible map is top 30%
+                        // To center the gym in the visible area, we need to shift the map center upward
+                        // The visible area center is at 15% from top, full center is at 50%
+                        // Offset needed: (50% - 15%) = 35% of screen height upward
+                        // In map coordinates, accounting for the visible area being 30%:
+                        // offset = (35% / 30%) * (span / 2) ≈ 0.58 * span, but we'll use a more direct calculation
+                        // Since the visible area is 30% and we want center at 15% from top,
+                        // and the full span represents 100% of screen, we need to move by:
+                        // (50% - 15%) / 100% * span = 0.35 * span, but adjusted for the smaller visible area
+                        // Actually, if we want the gym centered in the top 30%, we need to move it up by
+                        // approximately half the difference between full center and visible center
+                        // Let's use: (70% panel / 2) = 35% of screen = 0.35 * span, but since visible is 30%,
+                        // we need: 0.35 / 0.3 ≈ 1.17 * (span / 2) ≈ 0.58 * span
+                        // Note: We SUBTRACT to move the center UP (north) so the gym appears lower in the visible area
+                        // Reduced offset to position gym higher (less low) in the visible area
+                        let offsetRatio: Double = 0 // Position gym higher in visible area
+                        let adjustedLatitude = coord.latitude - (offsetRatio * region.span.latitudeDelta)
+                        
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            region = MKCoordinateRegion(
+                                center: CLLocationCoordinate2D(latitude: adjustedLatitude, longitude: coord.longitude),
+                                span: region.span // Keep current zoom level
+                            )
+                        }
+                    } else {
+                        // Panel is closing: center gym in the full map view
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            region = MKCoordinateRegion(
+                                center: coord,
+                                span: region.span // Keep current zoom level
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1365,20 +1448,26 @@ struct GymDetailView: View {
         case openingHours
     }
     
+    @State private var initialOffset: CGFloat = UIScreen.main.bounds.height
+    
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
             
             VStack(spacing: 0) {
-                // Drag handle with gesture
+                // Large drag handle area for easier interaction
                 VStack(spacing: 0) {
+                    // Visual drag handle
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.gray.opacity(0.3))
                         .frame(width: 40, height: 4)
                         .padding(.top, 8)
                         .padding(.bottom, 12)
                 }
+                .frame(height: 60) // Large interactive area
+                .frame(maxWidth: .infinity)
                 .background(Color.white)
+                .contentShape(Rectangle()) // Make entire area tappable/draggable
                 .gesture(
                     DragGesture()
                         .onChanged { value in
@@ -1388,11 +1477,12 @@ struct GymDetailView: View {
                             }
                         }
                         .onEnded { value in
-                            // If dragged down more than 100 points, dismiss
-                            if value.translation.height > 100 || value.predictedEndTranslation.height > 200 {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            // If dragged down more than 80 points, dismiss (lowered threshold for easier dismissal)
+                            if value.translation.height > 80 || value.predictedEndTranslation.height > 150 {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                                     isPresented = false
                                     dragOffset = 0
+                                    initialOffset = UIScreen.main.bounds.height
                                 }
                             } else {
                                 // Spring back to original position
@@ -1418,10 +1508,54 @@ struct GymDetailView: View {
                                     .cornerRadius(12)
                             }
                             
-                            // Gym name
+                            // Gym name and rating
+                            HStack(alignment: .top, spacing: 12) {
                                 Text(gymDetail.name)
                                     .poppins(.bold, size: 24)
-                                .foregroundColor(.black)
+                                    .foregroundColor(.black)
+                                
+                                Spacer()
+                                
+                                // Rating display (on the right side)
+                                if let rating = gymDetail.rating, let ratingsCount = gymDetail.ratingsCount {
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        HStack(spacing: 4) {
+                                            Text(String(format: "%.1f", rating))
+                                                .poppins(.bold, size: 16)
+                                                .foregroundColor(.black)
+                                            
+                                            // Star rating
+                                            HStack(spacing: 2) {
+                                                ForEach(0..<5) { index in
+                                                    let starValue = Double(index) + 1.0
+                                                    let starColor = Color(red: 1.0, green: 0.796, blue: 0.271) // #FFCB45
+                                                    
+                                                    if starValue <= rating {
+                                                        // Fully filled star
+                                                        Image(systemName: "star.fill")
+                                                            .font(.system(size: 14))
+                                                            .foregroundColor(starColor)
+                                                    } else if starValue - 0.5 <= rating {
+                                                        // Half-filled star
+                                                        Image(systemName: "star.lefthalf.filled")
+                                                            .font(.system(size: 14))
+                                                            .foregroundColor(starColor)
+                                                    } else {
+                                                        // Empty star
+                                                        Image(systemName: "star")
+                                                            .font(.system(size: 14))
+                                                            .foregroundColor(Color.gray.opacity(0.3))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        Text("based on \(ratingsCount) rating\(ratingsCount == 1 ? "" : "s")")
+                                            .poppins(.regular, size: 12)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                            }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 8)
@@ -1607,10 +1741,39 @@ struct GymDetailView: View {
             .cornerRadius(20, corners: [.topLeft, .topRight])
             .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: -5)
             .frame(maxHeight: panelHeight)
-            .offset(y: dragOffset)
+            .offset(y: dragOffset + initialOffset)
         }
-        .transition(.move(edge: .bottom))
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isPresented)
+        .onChange(of: isPresented) { newValue in
+            if newValue {
+                // Panel is opening - animate from bottom (off-screen) to on-screen
+                initialOffset = UIScreen.main.bounds.height
+                DispatchQueue.main.async {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        initialOffset = 0
+                    }
+                }
+            } else {
+                // Panel is closing - animate to bottom (off-screen)
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
+                    initialOffset = UIScreen.main.bounds.height
+                }
+            }
+        }
+        .onAppear {
+            // Initialize offset based on presentation state
+            if isPresented {
+                // Start off-screen, then animate in
+                initialOffset = UIScreen.main.bounds.height
+                DispatchQueue.main.async {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        initialOffset = 0
+                    }
+                }
+            } else {
+                // Keep off-screen
+                initialOffset = UIScreen.main.bounds.height
+            }
+        }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: dragOffset)
         .fullScreenCover(isPresented: $showTermsModal) {
             if let chain = chainData ?? gymDetail.gymChain {
@@ -1890,11 +2053,11 @@ struct SearchOverlayView: View {
                 }
                 
                 // Main overlay content - positioned at top
-                VStack(spacing: 20) {
+                VStack(spacing: 16) {
                     // Search Input Field
                     HStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondary)
                             .font(.system(size: 16))
                         
                         TextField("Search by name, chain, or city...", text: $searchQuery)
@@ -1910,96 +2073,95 @@ struct SearchOverlayView: View {
                                     searchService.gyms = []
                                 }
                             }
-                        
-                        // Location icon button (placeholder)
-                        Button(action: {
-                            // Location button action - not implemented yet
-                        }) {
-                            Image(systemName: "location.fill")
-                                .foregroundColor(.gray)
-                                .font(.system(size: 16))
-                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(10)
+                    .background(Color.white.opacity(0.9))
+                    .cornerRadius(12)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
                     )
                     .focused($isSearchFocused)
                     .padding(.horizontal, 20)
                     .padding(.top, 20)
                     
-                    // Filter Dropdowns
-                    VStack(spacing: 16) {
+                    // Filter Dropdowns - Cleaner Design
+                    VStack(spacing: 12) {
                         // Tier Filter
-                        VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.orange)
+                                .frame(width: 20)
+                            
                             Text("Tier")
-                                .poppins(.semibold, size: 14)
-                                .foregroundColor(.primary)
+                                .poppins(.medium, size: 14)
+                                .foregroundColor(.secondary)
+                                .frame(width: 60, alignment: .leading)
+                            
                             Picker("Tier", selection: $selectedTier) {
                                 ForEach(tierOptions, id: \.self) { tier in
                                     Text(tier).tag(tier)
                                 }
                             }
                             .pickerStyle(.menu)
+                            .tint(.primary)
                             .onChange(of: selectedTier) { newValue in
-                                // Don't filter on filter change - wait for search button
-                                // Just clear search state if all filters are cleared
                                 let allFiltersCleared = searchQuery.isEmpty && newValue == "All Tiers" && selectedChain == "All Chains"
-                                
                                 if allFiltersCleared {
-                                    // Reset to show all gyms
                                     hasSearched = false
                                     searchService.gyms = []
                                 }
                             }
+                            
+                            Spacer()
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.white.opacity(0.5))
+                        .cornerRadius(12)
                         
                         // Chain Filter
-                        VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "building.2.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.blue)
+                                .frame(width: 20)
+                            
                             Text("Chain")
-                                .poppins(.semibold, size: 14)
-                                .foregroundColor(.primary)
+                                .poppins(.medium, size: 14)
+                                .foregroundColor(.secondary)
+                                .frame(width: 60, alignment: .leading)
+                            
                             Picker("Chain", selection: $selectedChain) {
                                 ForEach(chainOptions, id: \.self) { chain in
                                     Text(chain).tag(chain)
                                 }
                             }
                             .pickerStyle(.menu)
+                            .tint(.primary)
                             .onChange(of: selectedChain) { newValue in
-                                // Don't filter on filter change - wait for search button
-                                // Just clear search state if all filters are cleared
                                 let allFiltersCleared = searchQuery.isEmpty && selectedTier == "All Tiers" && newValue == "All Chains"
-                                
                                 if allFiltersCleared {
-                                    // Reset to show all gyms
                                     hasSearched = false
                                     searchService.gyms = []
                                 }
                             }
+                            
+                            Spacer()
                         }
-                        
-                        // Facility Filter (placeholder - not implemented)
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Facility")
-                                .poppins(.semibold, size: 14)
-                                .foregroundColor(.primary)
-                            Picker("Facility", selection: $selectedFacility) {
-                                Text("All Facilities").tag("All Facilities")
-                            }
-                            .pickerStyle(.menu)
-                            .disabled(true)
-                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.white.opacity(0.5))
+                        .cornerRadius(12)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 20)
                 }
-                .background(.ultraThinMaterial)
+                .background(Color.white.opacity(0.95))
                 .cornerRadius(20)
-                .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+                .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
                 
@@ -2014,20 +2176,20 @@ struct SearchOverlayView: View {
                     )
                     isPresented = false
                 }) {
-                    HStack {
+                    HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 18))
+                            .font(.system(size: 16, weight: .semibold))
                         Text("Search")
-                            .poppins(.semibold, size: 18)
+                            .poppins(.semibold, size: 16)
                     }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color.orange)
-                    .cornerRadius(80)
+                    .padding(.vertical, 14)
+                    .background(Color(red: 1.0, green: 0.42, blue: 0.42)) // Brand color #FF6B6B
+                    .cornerRadius(12)
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 16)
+                .padding(.top, 8)
                 
                 Spacer()
             }
@@ -2046,7 +2208,7 @@ struct SearchOverlayView: View {
 }
 
 // MARK: - Pass Model
-struct Pass: Codable, Identifiable {
+struct Pass: Codable, Identifiable, Equatable {
     let id: Int
     let gymId: Int
     let userId: String
@@ -2087,6 +2249,10 @@ struct Pass: Codable, Identifiable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case visitsUsed = "visits_used"
+    }
+    
+    static func == (lhs: Pass, rhs: Pass) -> Bool {
+        return lhs.id == rhs.id
     }
 }
 
@@ -2946,6 +3112,7 @@ struct ActivePassBottomSheet: View {
     let pass: Pass
     @Binding var isExpanded: Bool
     @Binding var dragOffset: CGFloat
+    @Binding var isPresented: Bool
     
     var gymDisplayName: String {
         if let gymName = pass.gymName, !gymName.isEmpty {
@@ -2957,7 +3124,7 @@ struct ActivePassBottomSheet: View {
         }
     }
     
-    private let collapsedHeight: CGFloat = 100
+    private let collapsedHeight: CGFloat = 70
     private let expandedHeight: CGFloat = UIScreen.main.bounds.height * 0.85
     
     var body: some View {
@@ -2965,61 +3132,67 @@ struct ActivePassBottomSheet: View {
             Spacer()
             
             VStack(spacing: 0) {
-                // Spacing at top to avoid notch when expanded
                 if isExpanded {
-                    Spacer()
-                        .frame(height: 20)
-                }
-                
-                // Drag handle
-                VStack(spacing: 0) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 40, height: 4)
-                        .padding(.top, 8)
-                        .padding(.bottom, 12)
-                }
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            if value.translation.height > 0 {
-                                // Dragging down
-                                dragOffset = value.translation.height
-                            } else if isExpanded {
-                                // Dragging up when expanded
-                                dragOffset = value.translation.height
-                            }
-                        }
-                        .onEnded { value in
-                            if value.translation.height > 100 || value.predictedEndTranslation.height > 200 {
-                                // Swipe down to collapse
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isExpanded = false
-                                    dragOffset = 0
-                                }
-                            } else if value.translation.height < -50 || value.predictedEndTranslation.height < -100 {
-                                // Swipe up to expand
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isExpanded = true
-                                    dragOffset = 0
-                                }
-                            } else {
-                                // Spring back
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    dragOffset = 0
-                                }
-                            }
-                        }
-                )
-                .onTapGesture {
-                    // Tap to toggle
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                        dragOffset = 0
+                    // Large drag handle area for easier interaction (only when expanded)
+                    VStack(spacing: 0) {
+                        // Visual drag handle
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 40, height: 4)
+                            .padding(.top, 8)
+                            .padding(.bottom, 12)
                     }
-                }
-                
-                if isExpanded {
+                    .frame(height: 60) // Large interactive area
+                    .frame(maxWidth: .infinity)
+                    .background(Color.white)
+                    .contentShape(Rectangle()) // Make entire area tappable/draggable
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                if value.translation.height > 0 {
+                                    // Dragging down - always allow
+                                    dragOffset = value.translation.height
+                                } else if isExpanded {
+                                    // Dragging up when expanded
+                                    dragOffset = value.translation.height
+                                }
+                            }
+                            .onEnded { value in
+                                // If dragged down far enough, collapse
+                                if value.translation.height > 150 || value.predictedEndTranslation.height > 250 {
+                                    // Collapse the panel
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        isExpanded = false
+                                        dragOffset = 0
+                                    }
+                                } else if value.translation.height > 80 || value.predictedEndTranslation.height > 150 {
+                                    // Swipe down to collapse
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        isExpanded = false
+                                        dragOffset = 0
+                                    }
+                                } else if value.translation.height < -50 || value.predictedEndTranslation.height < -100 {
+                                    // Swipe up to expand
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        isExpanded = true
+                                        dragOffset = 0
+                                    }
+                                } else {
+                                    // Spring back
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        dragOffset = 0
+                                    }
+                                }
+                            }
+                    )
+                    .onTapGesture {
+                        // Tap to collapse
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            isExpanded = false
+                            dragOffset = 0
+                        }
+                    }
+                    
                     // Expanded view - show full ActivePassCard
                     ScrollView {
                         ActivePassCard(pass: pass)
@@ -3028,64 +3201,97 @@ struct ActivePassBottomSheet: View {
                             .padding(.bottom, 40)
                     }
                 } else {
-                    // Collapsed view - show gym name and logo
-                    HStack(spacing: 16) {
+                    // Collapsed view - show gym name and logo with drag handle
+                    HStack(spacing: 12) {
                         // Gym Chain Logo
                         if let logoUrl = pass.gymChainLogo, !logoUrl.isEmpty, let url = URL(string: logoUrl) {
                             AsyncImage(url: url) { phase in
                                 switch phase {
                                 case .empty:
                                     ProgressView()
-                                        .frame(width: 50, height: 50)
+                                        .frame(width: 40, height: 40)
                                 case .success(let image):
                                     image
                                         .resizable()
                                         .scaledToFit()
-                                        .frame(width: 50, height: 50)
+                                        .frame(width: 40, height: 40)
                                         .cornerRadius(8)
                                 case .failure:
                                     Image(systemName: "building.2.fill")
-                                        .font(.system(size: 24))
+                                        .font(.system(size: 20))
                                         .foregroundColor(.gray)
-                                        .frame(width: 50, height: 50)
+                                        .frame(width: 40, height: 40)
                                 @unknown default:
                                     Image(systemName: "building.2.fill")
-                                        .font(.system(size: 24))
+                                        .font(.system(size: 20))
                                         .foregroundColor(.gray)
-                                        .frame(width: 50, height: 50)
+                                        .frame(width: 40, height: 40)
                                 }
                             }
-                            .frame(width: 50, height: 50)
+                            .frame(width: 40, height: 40)
                         } else {
                             Image(systemName: "building.2.fill")
-                                .font(.system(size: 24))
+                                .font(.system(size: 20))
                                 .foregroundColor(.gray)
-                                .frame(width: 50, height: 50)
+                                .frame(width: 40, height: 40)
                         }
                         
                         // Gym Name with "Active pass: " prefix
                         HStack(spacing: 4) {
                             Text("Active pass:")
-                                .poppins(.regular, size: 18)
+                                .poppins(.regular, size: 16)
                                 .foregroundColor(.black)
                             Text(gymDisplayName)
-                                .poppins(.semibold, size: 18)
+                                .poppins(.semibold, size: 16)
                                 .foregroundColor(.black)
                         }
                         
                         Spacer()
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                    .padding(.horizontal, 16)
+                    .frame(height: collapsedHeight)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                if value.translation.height > 0 {
+                                    // Dragging down - allow
+                                    dragOffset = value.translation.height
+                                }
+                            }
+                            .onEnded { value in
+                                // If dragged down far enough, stay collapsed (don't dismiss)
+                                if value.translation.height > 80 || value.predictedEndTranslation.height > 150 {
+                                    // Just spring back, keep collapsed
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        dragOffset = 0
+                                    }
+                                } else {
+                                    // Spring back
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        dragOffset = 0
+                                    }
+                                }
+                            }
+                    )
+                    .onTapGesture {
+                        // Tap to expand
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            isExpanded = true
+                            dragOffset = 0
+                        }
+                    }
                 }
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: isExpanded ? (expandedHeight - 40) : collapsedHeight) // Add 20pt to height when expanded for spacing
             .background(Color.white)
             .cornerRadius(20, corners: [.topLeft, .topRight])
             .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: -5)
+            .frame(maxHeight: isExpanded ? expandedHeight : collapsedHeight)
             .offset(y: dragOffset)
         }
+        .transition(.move(edge: .bottom))
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isPresented)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: dragOffset)
     }
 }
 
@@ -3610,22 +3816,6 @@ struct ProfileView: View {
             // Profile Card
             if let profile = authManager.userProfile {
                 VStack(spacing: 16) {
-                            // Profile Picture with Verified Badge
-                            ZStack(alignment: .bottomTrailing) {
-                                // Profile Picture
-                    Image(systemName: "person.circle.fill")
-                        .font(.system(size: 80))
-                                    .foregroundColor(Color(red: 0.9, green: 0.9, blue: 0.9))
-                                
-                                // Verified Badge
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 24))
-                                    .foregroundColor(Color(red: 1.0, green: 0.42, blue: 0.42))
-                                    .background(Color.white)
-                                    .clipShape(Circle())
-                                    .offset(x: 5, y: 5)
-                            }
-                            
                             // Name
                             Text(profile.firstName)
                                 .poppins(.bold, size: 22)
@@ -4429,8 +4619,15 @@ struct ChangeSubscriptionView: View {
     
     private func fetchStripeProducts() {
         guard let stripeKey = Bundle.main.infoDictionary?["StripePublishableKey"] as? String,
+              !stripeKey.isEmpty,
+              stripeKey != "YOUR_STRIPE_SECRET_KEY_HERE",
               stripeKey.hasPrefix("sk_") else {
-            errorMessage = "Stripe configuration error"
+            isLoadingProducts = false
+            if let key = Bundle.main.infoDictionary?["StripePublishableKey"] as? String, key == "YOUR_STRIPE_SECRET_KEY_HERE" {
+                errorMessage = "Please configure your Stripe secret key in Info.plist. Add your Stripe secret key (starts with sk_test_) to the 'StripePublishableKey' field."
+            } else {
+                errorMessage = "Stripe configuration error: Invalid or missing Stripe secret key in Info.plist"
+            }
             return
         }
         
