@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject var authManager: AuthManager
@@ -29,6 +30,11 @@ struct ContentView: View {
             } else {
                 OnboardingView()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            // When app becomes active from Live Activity tap, ensure we're on MainView
+            print("📱 ContentView: App became active - checking if should show active pass")
+            // The MainView will handle showing the panel
         }
         .onAppear {
             // Check auth status on appear, which will auto-trigger login if not authenticated

@@ -52,5 +52,13 @@
 		<key>UIImageName</key>
 		<string>LaunchScreen</string>
 	</dict>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>AnyGym needs notification permissions to show Live Activities for your active gym passes on the Lock Screen and Dynamic Island.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+	</array>
 </dict>
 </plist>

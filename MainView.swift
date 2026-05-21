@@ -267,6 +267,469 @@ struct GymChain: Codable, Identifiable {
     }
 }
 
+// MARK: - Article Model
+struct Article: Codable, Identifiable {
+    let id: String
+    let title: String
+    let slug: String?
+    let excerpt: String?
+    let headline: String?
+    let featuredImage: String?
+    let featuredImageAlt: String?
+    let publishedDate: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case slug
+        case excerpt
+        case headline
+        case featuredImage = "featured_image"
+        case featuredImageAlt = "featured_image_alt"
+        case publishedDate = "published_date"
+    }
+}
+
+// MARK: - Articles Response
+struct ArticlesResponse: Codable {
+    let results: [Article]
+    let pagination: Pagination?
+}
+
+struct Pagination: Codable {
+    let total: Int
+    let page: Int
+    let limit: Int
+    let totalPages: Int
+    // No explicit CodingKeys needed - convertFromSnakeCase handles total_pages -> totalPages automatically
+}
+
+// MARK: - Article Detail Models
+struct ArticleDetail: Codable {
+    let id: String
+    let entryTitle: String
+    let title: String
+    let slug: String?
+    let headline: RichTextContent?
+    let heroImage: HeroImage?
+    let body: RichTextContent?
+}
+
+struct RichTextContent: Codable {
+    let data: [String: String]?
+    let content: [ContentNode]?
+    let nodeType: String
+    
+    enum CodingKeys: String, CodingKey {
+        case data
+        case content
+        case nodeType = "nodeType"
+    }
+}
+
+struct ContentNode: Codable {
+    let data: [String: String]?
+    let content: [ContentNode]?
+    let marks: [TextMark]?
+    let value: String?
+    let nodeType: String
+    
+    enum CodingKeys: String, CodingKey {
+        case data
+        case content
+        case marks
+        case value
+        case nodeType = "nodeType"
+    }
+}
+
+struct TextMark: Codable {
+    let type: String
+}
+
+struct HeroImage: Codable {
+    let fields: HeroImageFields?
+    let sys: HeroImageSys?
+}
+
+struct HeroImageFields: Codable {
+    let image: [CloudinaryImage]?
+    let altText: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case image
+        case altText = "altText"
+    }
+}
+
+struct CloudinaryImage: Codable {
+    let url: String?
+    let secureUrl: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case url
+        case secureUrl = "secure_url"
+    }
+}
+
+struct HeroImageSys: Codable {
+    let id: String?
+}
+
+// MARK: - Article Service Error
+enum ArticleServiceError: Error {
+    case categoryNotFound(message: String)
+}
+
+// MARK: - Article Service
+class ArticleService: ObservableObject {
+    @Published var articles: [Article] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    @Published var isNotFoundError = false // Track 404 errors for category not found
+    
+    private let baseURL = "https://api.any-gym.com"
+    private var cancellables = Set<AnyCancellable>()
+    
+    func fetchArticles(category: String? = nil) {
+        isLoading = true
+        errorMessage = nil
+        isNotFoundError = false
+        
+        var components = URLComponents(string: "\(baseURL)/content/articles")
+        if let category = category {
+            components?.queryItems = [URLQueryItem(name: "category", value: category)]
+        }
+        
+        guard let url = components?.url else {
+            errorMessage = "Invalid URL"
+            isLoading = false
+            return
+        }
+        
+        print("=== Fetching Articles ===")
+        print("URL: \(url.absoluteString)")
+        
+        URLSession.shared.dataTaskPublisher(for: url)
+            .tryMap { output -> Data in
+                // Check HTTP response status
+                guard let httpResponse = output.response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                
+                print("HTTP Status Code: \(httpResponse.statusCode)")
+                
+                if httpResponse.statusCode == 404 {
+                    // Return the error response data so we can parse it
+                    return output.data
+                }
+                
+                if httpResponse.statusCode != 200 {
+                    let statusError = NSError(
+                        domain: "ArticleService",
+                        code: httpResponse.statusCode,
+                        userInfo: [NSLocalizedDescriptionKey: "Server returned status code \(httpResponse.statusCode)"]
+                    )
+                    throw statusError
+                }
+                
+                return output.data
+            }
+            .tryMap { data -> [Article] in
+                // Check if this is a 404 error response
+                if let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let statusCode = jsonObject["statusCode"] as? Int,
+                   statusCode == 404 {
+                    // This is a 404 error - throw a special error type
+                    let errorMessage = jsonObject["message"] as? String ?? "Category not found"
+                    throw ArticleServiceError.categoryNotFound(message: errorMessage)
+                }
+                
+                // Log raw response for debugging
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("=== Articles API Response ===")
+                    print("Response length: \(data.count) bytes")
+                    print("Raw response (first 2000 chars): \(String(jsonString.prefix(2000)))")
+                    print("==============================")
+                } else {
+                    print("=== Articles API Response ===")
+                    print("Response is not valid UTF-8 string")
+                    print("Response length: \(data.count) bytes")
+                    print("==============================")
+                }
+                
+                // Check if data is empty
+                guard !data.isEmpty else {
+                    print("Response data is empty")
+                    return []
+                }
+                
+                // First, let's manually check what's in the results array
+                if let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let resultsArray = jsonObject["results"] as? [[String: Any]],
+                   let firstArticle = resultsArray.first {
+                    print("🔍 Raw article data from JSON:")
+                    print("   Keys: \(firstArticle.keys.joined(separator: ", "))")
+                    print("   featured_image: \(firstArticle["featured_image"] ?? "nil")")
+                    print("   featured_image_alt: \(firstArticle["featured_image_alt"] ?? "nil")")
+                }
+                
+                // Try decoding - use convertFromSnakeCase for pagination, but Article has explicit CodingKeys
+                // So we'll decode manually to ensure Article's CodingKeys work correctly
+                if let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    // Decode articles manually to ensure CodingKeys work
+                    let articleDecoder = JSONDecoder()
+                    // Don't use convertFromSnakeCase for Article - it has explicit CodingKeys
+                    
+                    var articles: [Article] = []
+                    if let resultsArray = jsonObject["results"] as? [[String: Any]] {
+                        for articleDict in resultsArray {
+                            if let articleData = try? JSONSerialization.data(withJSONObject: articleDict),
+                               let article = try? articleDecoder.decode(Article.self, from: articleData) {
+                                articles.append(article)
+                            }
+                        }
+                    }
+                    
+                    // Decode pagination with convertFromSnakeCase
+                    let paginationDecoder = JSONDecoder()
+                    paginationDecoder.keyDecodingStrategy = .convertFromSnakeCase
+                    var pagination: Pagination? = nil
+                    if let paginationDict = jsonObject["pagination"] as? [String: Any],
+                       let paginationData = try? JSONSerialization.data(withJSONObject: paginationDict),
+                       let decodedPagination = try? paginationDecoder.decode(Pagination.self, from: paginationData) {
+                        pagination = decodedPagination
+                    }
+                    
+                    if !articles.isEmpty {
+                        print("Successfully decoded \(articles.count) articles from API")
+                        for article in articles {
+                            print("  Article: \(article.title)")
+                            print("    ID: \(article.id)")
+                            print("    Featured Image: \(article.featuredImage ?? "nil")")
+                            print("    Featured Image Alt: \(article.featuredImageAlt ?? "nil")")
+                        }
+                        if let pagination = pagination {
+                            print("Pagination: page \(pagination.page) of \(pagination.totalPages) (total: \(pagination.total))")
+                        }
+                        return articles
+                    }
+                }
+                
+                // Fallback: Try standard decoding
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                
+                do {
+                    let response = try decoder.decode(ArticlesResponse.self, from: data)
+                    print("Successfully decoded \(response.results.count) articles from API (standard method)")
+                    for article in response.results {
+                        print("  Article: \(article.title)")
+                        print("    ID: \(article.id)")
+                        print("    Featured Image: \(article.featuredImage ?? "nil")")
+                        print("    Featured Image Alt: \(article.featuredImageAlt ?? "nil")")
+                    }
+                    if let pagination = response.pagination {
+                        print("Pagination: page \(pagination.page) of \(pagination.totalPages) (total: \(pagination.total))")
+                    }
+                    return response.results
+                } catch {
+                    print("Failed to decode ArticlesResponse, trying fallback methods...")
+                    print("Decoding error: \(error)")
+                    
+                    // Fallback: Try to decode as direct array
+                    if let articles = try? decoder.decode([Article].self, from: data) {
+                        print("Successfully decoded \(articles.count) articles as direct array")
+                        return articles
+                    }
+                    
+                    // Fallback: Try to extract from results key manually
+                    // Use a decoder without convertFromSnakeCase since Article has explicit CodingKeys
+                    if let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let resultsArray = jsonObject["results"] as? [[String: Any]] {
+                        print("Found results array, decoding manually...")
+                        let articleDecoder = JSONDecoder()
+                        // Don't use convertFromSnakeCase - Article has explicit CodingKeys
+                        // articleDecoder.keyDecodingStrategy = .convertFromSnakeCase
+                        
+                        var validArticles: [Article] = []
+                        for (index, articleDict) in resultsArray.enumerated() {
+                            if let articleData = try? JSONSerialization.data(withJSONObject: articleDict) {
+                                do {
+                                    let article = try articleDecoder.decode(Article.self, from: articleData)
+                                    print("✅ Successfully decoded article at index \(index)")
+                                    print("   Featured Image: \(article.featuredImage ?? "nil")")
+                                    validArticles.append(article)
+                                } catch {
+                                    print("❌ Failed to decode article at index \(index): \(error)")
+                                    print("   Keys: \(articleDict.keys.joined(separator: ", "))")
+                                    if let decodingError = error as? DecodingError {
+                                        switch decodingError {
+                                        case .keyNotFound(let key, let context):
+                                            print("   Missing key: \(key.stringValue) at path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                                        default:
+                                            print("   Error: \(decodingError)")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !validArticles.isEmpty {
+                            print("Decoded \(validArticles.count) out of \(resultsArray.count) articles")
+                            return validArticles
+                        }
+                    }
+                    
+                    // Log detailed decoding error
+                    if let decodingError = error as? DecodingError {
+                        print("Detailed decoding error: \(decodingError)")
+                        switch decodingError {
+                        case .typeMismatch(let type, let context):
+                            print("Type mismatch: expected \(type), path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                        case .valueNotFound(let type, let context):
+                            print("Value not found: \(type), path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                        case .keyNotFound(let key, let context):
+                            print("Key not found: \(key.stringValue), path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                        case .dataCorrupted(let context):
+                            print("Data corrupted: \(context.debugDescription)")
+                        @unknown default:
+                            print("Unknown decoding error")
+                        }
+                    }
+                    
+                    throw error
+                }
+            }
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.isLoading = false
+                    if case .failure(let error) = completion {
+                        // Check if this is a categoryNotFound error (404)
+                        if case ArticleServiceError.categoryNotFound(let message) = error {
+                            self?.isNotFoundError = true
+                            self?.articles = [] // Clear articles
+                            self?.errorMessage = nil // Don't show error message
+                            print("Category not found: \(message)")
+                            return
+                        }
+                        
+                        var errorMsg = "Failed to load articles."
+                        
+                        if let urlError = error as? URLError {
+                            print("URLError: \(urlError.localizedDescription) (code: \(urlError.code.rawValue))")
+                            switch urlError.code {
+                            case .notConnectedToInternet, .networkConnectionLost:
+                                errorMsg = "No internet connection. Please check your network."
+                            case .timedOut:
+                                errorMsg = "Request timed out. Please try again."
+                            case .cannotFindHost, .cannotConnectToHost:
+                                errorMsg = "Cannot connect to server. Please try again later."
+                            default:
+                                errorMsg = "Network error: \(urlError.localizedDescription)"
+                            }
+                        } else if let nsError = error as NSError? {
+                            print("NSError: \(nsError.localizedDescription) (code: \(nsError.code))")
+                            if nsError.domain == "ArticleService" {
+                                errorMsg = "Server error: \(nsError.localizedDescription)"
+                            } else if error is DecodingError {
+                                errorMsg = "Failed to parse articles. Please try again later."
+                            } else {
+                                errorMsg = "Error: \(nsError.localizedDescription)"
+                            }
+                        } else if error is DecodingError {
+                            print("Decoding error: \(error)")
+                            errorMsg = "Failed to parse articles. Please try again later."
+                        } else {
+                            print("Unknown error: \(error)")
+                            errorMsg = "An unexpected error occurred. Please try again."
+                        }
+                        
+                        self?.isNotFoundError = false
+                        self?.errorMessage = errorMsg
+                        print("Error fetching articles: \(error)")
+                    }
+                },
+                receiveValue: { [weak self] articles in
+                    print("Successfully fetched \(articles.count) articles")
+                    self?.articles = articles
+                    self?.isLoading = false
+                    self?.isNotFoundError = false
+                }
+            )
+            .store(in: &cancellables)
+    }
+    
+    func fetchArticleDetail(articleId: String) -> AnyPublisher<ArticleDetail, Error> {
+        guard let url = URL(string: "\(baseURL)/content/articles/\(articleId)") else {
+            return Fail(error: URLError(.badURL))
+                .eraseToAnyPublisher()
+        }
+        
+        print("=== Fetching Article Detail ===")
+        print("URL: \(url.absoluteString)")
+        
+        return URLSession.shared.dataTaskPublisher(for: url)
+            .tryMap { output -> Data in
+                guard let httpResponse = output.response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                
+                print("HTTP Status Code: \(httpResponse.statusCode)")
+                
+                if httpResponse.statusCode != 200 {
+                    let statusError = NSError(
+                        domain: "ArticleService",
+                        code: httpResponse.statusCode,
+                        userInfo: [NSLocalizedDescriptionKey: "Server returned status code \(httpResponse.statusCode)"]
+                    )
+                    throw statusError
+                }
+                
+                return output.data
+            }
+            .tryMap { data -> ArticleDetail in
+                // Log raw response for debugging
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("=== Article Detail API Response ===")
+                    print("Response length: \(data.count) bytes")
+                    print("Raw response (first 2000 chars): \(String(jsonString.prefix(2000)))")
+                    print("==============================")
+                }
+                
+                let decoder = JSONDecoder()
+                // Article detail uses camelCase, not snake_case
+                // decoder.keyDecodingStrategy = .convertFromSnakeCase
+                
+                do {
+                    let articleDetail = try decoder.decode(ArticleDetail.self, from: data)
+                    print("Successfully decoded article detail")
+                    return articleDetail
+                } catch {
+                    print("Failed to decode article detail: \(error)")
+                    if let decodingError = error as? DecodingError {
+                        print("Decoding error details: \(decodingError)")
+                        switch decodingError {
+                        case .typeMismatch(let type, let context):
+                            print("Type mismatch: expected \(type), path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                        case .valueNotFound(let type, let context):
+                            print("Value not found: \(type), path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                        case .keyNotFound(let key, let context):
+                            print("Key not found: \(key.stringValue), path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                        case .dataCorrupted(let context):
+                            print("Data corrupted: \(context.debugDescription)")
+                        @unknown default:
+                            print("Unknown decoding error")
+                        }
+                    }
+                    throw error
+                }
+            }
+            .receive(on: DispatchQueue.main)
+            .eraseToAnyPublisher()
+    }
+}
+
 // MARK: - Gym Search Service
 class GymSearchService: ObservableObject {
     @Published var gyms: [Gym] = []
@@ -406,8 +869,18 @@ struct GymDetailResponse: Codable {
 
 // MARK: - Generate Pass Response
 struct GeneratePassResponse: Codable {
-    let success: Bool
     let message: String
+    let passId: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case message
+        case passId = "pass_id"
+    }
+    
+    // For backwards compatibility
+    var success: Bool {
+        return true // If we get a response, it's successful
+    }
 }
 
 // MARK: - Error Response
@@ -539,12 +1012,15 @@ class GymDetailService: ObservableObject {
 enum Tab: String, CaseIterable {
     case findGyms = "Find Gyms"
     case myPasses = "My Passes"
+    case explore = "Explore"
     case profile = "Profile"
     
     var icon: String {
         switch self {
         case .findGyms:
             return "mappin.circle.fill"
+        case .explore:
+            return "magnifyingglass"
         case .myPasses:
             return "rectangle.stack.fill"
         case .profile:
@@ -895,37 +1371,88 @@ struct GymMapView: UIViewRepresentable {
             let orangeColor = UIColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 1.0)
             
             if gymAnnotation.isSelected {
-                // Selected gym marker - custom orange circle with pin emoji
-                let size: CGFloat = 32
-                let circleView = UIView(frame: CGRect(x: 0, y: 0, width: size, height: size))
-                circleView.backgroundColor = orangeColor
-                circleView.layer.cornerRadius = size / 2
-                circleView.layer.borderWidth = 4
-                circleView.layer.borderColor = UIColor.white.cgColor
-                circleView.layer.shadowColor = UIColor.black.cgColor
-                circleView.layer.shadowOffset = CGSize(width: 0, height: 4)
-                circleView.layer.shadowRadius = 8
-                circleView.layer.shadowOpacity = 0.4
-                
-                let emojiLabel = UILabel(frame: CGRect(x: 0, y: 0, width: size, height: size))
-                emojiLabel.text = "📍"
-                emojiLabel.font = UIFont.systemFont(ofSize: 18)
-                emojiLabel.textAlignment = .center
-                
-                circleView.addSubview(emojiLabel)
-                annotationView?.addSubview(circleView)
-                annotationView?.frame = CGRect(x: 0, y: 0, width: size, height: size)
-                annotationView?.centerOffset = CGPoint(x: 0, y: -size/2)
-                annotationView?.zPriority = .max // Ensure it's on top
-                annotationView?.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+                // Selected gym marker - use custom gym pin icon with larger size and border
+                let iconSize: CGFloat = 48
+                if let gymPinImage = UIImage(named: "gymPinIcon") {
+                    // Use the custom icon image with selection styling
+                    let imageView = UIImageView(image: gymPinImage)
+                    imageView.frame = CGRect(x: 0, y: 0, width: iconSize, height: iconSize)
+                    imageView.contentMode = .scaleAspectFit
+                    
+                    // Add shadow to indicate selection
+                    imageView.layer.shadowColor = UIColor.black.cgColor
+                    imageView.layer.shadowOffset = CGSize(width: 0, height: 4)
+                    imageView.layer.shadowRadius = 8
+                    imageView.layer.shadowOpacity = 0.4
+                    
+                    annotationView?.addSubview(imageView)
+                    annotationView?.frame = CGRect(x: 0, y: 0, width: iconSize, height: iconSize)
+                    annotationView?.centerOffset = CGPoint(x: 0, y: -iconSize/2)
+                    annotationView?.zPriority = .max // Ensure it's on top
+                    annotationView?.transform = CGAffineTransform(scaleX: 1.1, y: 1.1)
+                } else {
+                    // Fallback to orange circle with pin emoji if icon not found
+                    let size: CGFloat = 32
+                    let circleView = UIView(frame: CGRect(x: 0, y: 0, width: size, height: size))
+                    circleView.backgroundColor = orangeColor
+                    circleView.layer.cornerRadius = size / 2
+                    circleView.layer.borderWidth = 4
+                    circleView.layer.borderColor = UIColor.white.cgColor
+                    circleView.layer.shadowColor = UIColor.black.cgColor
+                    circleView.layer.shadowOffset = CGSize(width: 0, height: 4)
+                    circleView.layer.shadowRadius = 8
+                    circleView.layer.shadowOpacity = 0.4
+                    
+                    let emojiLabel = UILabel(frame: CGRect(x: 0, y: 0, width: size, height: size))
+                    emojiLabel.text = "📍"
+                    emojiLabel.font = UIFont.systemFont(ofSize: 18)
+                    emojiLabel.textAlignment = .center
+                    
+                    circleView.addSubview(emojiLabel)
+                    annotationView?.addSubview(circleView)
+                    annotationView?.frame = CGRect(x: 0, y: 0, width: size, height: size)
+                    annotationView?.centerOffset = CGPoint(x: 0, y: -size/2)
+                    annotationView?.zPriority = .max // Ensure it's on top
+                    annotationView?.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+                }
                 annotationView?.canShowCallout = false
                 
             } else if gymAnnotation.gymCount == 1 {
-                // Individual gym marker - use standard blue pin with callout
-                let pinView = MKPinAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                pinView.pinTintColor = .systemBlue
-                pinView.canShowCallout = true
-                pinView.animatesDrop = false
+                // Individual gym marker - use custom gym pin icon with callout
+                annotationView?.canShowCallout = true
+                
+                // Load custom gym pin icon from assets
+                let iconSize: CGFloat = 40
+                if let gymPinImage = UIImage(named: "gymPinIcon") {
+                    // Use the custom icon image
+                    let imageView = UIImageView(image: gymPinImage)
+                    imageView.frame = CGRect(x: 0, y: 0, width: iconSize, height: iconSize)
+                    imageView.contentMode = .scaleAspectFit
+                    annotationView?.addSubview(imageView)
+                    annotationView?.frame = CGRect(x: 0, y: 0, width: iconSize, height: iconSize)
+                    annotationView?.centerOffset = CGPoint(x: 0, y: -iconSize/2)
+                } else {
+                    // Fallback to orange circle with pin if icon not found
+                    let circleView = UIView(frame: CGRect(x: 0, y: 0, width: iconSize, height: iconSize))
+                    circleView.backgroundColor = orangeColor
+                    circleView.layer.cornerRadius = iconSize / 2
+                    circleView.layer.borderWidth = 3
+                    circleView.layer.borderColor = UIColor.white.cgColor
+                    circleView.layer.shadowColor = UIColor.black.cgColor
+                    circleView.layer.shadowOffset = CGSize(width: 0, height: 2)
+                    circleView.layer.shadowRadius = 4
+                    circleView.layer.shadowOpacity = 0.3
+                    
+                    let emojiLabel = UILabel(frame: CGRect(x: 0, y: 0, width: iconSize, height: iconSize))
+                    emojiLabel.text = "📍"
+                    emojiLabel.font = UIFont.systemFont(ofSize: 20)
+                    emojiLabel.textAlignment = .center
+                    
+                    circleView.addSubview(emojiLabel)
+                    annotationView?.addSubview(circleView)
+                    annotationView?.frame = CGRect(x: 0, y: 0, width: iconSize, height: iconSize)
+                    annotationView?.centerOffset = CGPoint(x: 0, y: -iconSize/2)
+                }
                 
                 // Setup callout with gym details
                 if let gym = gymAnnotation.gym {
@@ -957,7 +1484,7 @@ struct GymMapView: UIViewRepresentable {
                     stackView.spacing = 4
                     stackView.frame = CGRect(x: 0, y: 0, width: 200, height: 60)
                     
-                    pinView.detailCalloutAccessoryView = stackView
+                    annotationView?.detailCalloutAccessoryView = stackView
                     
                     // Add "View Details" button
                     let detailButton = UIButton(type: .custom)
@@ -968,10 +1495,8 @@ struct GymMapView: UIViewRepresentable {
                     detailButton.layer.cornerRadius = 8
                     // Use frame-based sizing instead of deprecated contentEdgeInsets
                     detailButton.frame = CGRect(x: 0, y: 0, width: 120, height: 36)
-                    pinView.rightCalloutAccessoryView = detailButton
+                    annotationView?.rightCalloutAccessoryView = detailButton
                 }
-                
-                return pinView
                 
             } else {
                 // Cluster marker - orange circle with count (40pt diameter)
@@ -1354,6 +1879,45 @@ struct FindGymsView: View {
             } else {
                 // Only hide if there's no active pass
                 showActivePassPanel = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowActivePass"))) { _ in
+            // Handle Live Activity tap - show active pass panel
+            print("📱 MainView: Received ShowActivePass notification")
+            if passService.activePass != nil {
+                showActivePassPanel = true
+                activePassExpanded = false
+                activePassDragOffset = 0
+            } else {
+                // If no active pass, fetch it
+                if let user = authManager.user {
+                    passService.fetchActivePass(auth0Id: user.sub)
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            // When app comes to foreground (e.g., from Live Activity tap), ensure active pass panel is shown
+            print("📱 MainView: App entering foreground")
+            // Always refresh active pass when coming to foreground
+            if let user = authManager.user {
+                passService.fetchActivePass(auth0Id: user.sub)
+            }
+            // Show panel if there's an active pass
+            if passService.activePass != nil {
+                print("   Showing active pass panel")
+                showActivePassPanel = true
+                activePassExpanded = false
+                activePassDragOffset = 0
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            // When app becomes active (including from Live Activity tap), show active pass panel
+            print("📱 MainView: App became active")
+            if passService.activePass != nil {
+                print("   Ensuring active pass panel is visible")
+                showActivePassPanel = true
+                activePassExpanded = false
+                activePassDragOffset = 0
             }
         }
         .onChange(of: gymService.gyms) { newGyms in
@@ -1870,27 +2434,49 @@ struct GymDetailView: View {
     }
     
     private func generatePassDirectly() {
+        print("═══════════════════════════════════════════════")
+        print("🚀 generatePassDirectly() called")
+        print("   Gym ID: \(gymDetail.id)")
+        print("═══════════════════════════════════════════════")
+        
         isGeneratingPass = true
         errorMessage = nil
         
         guard let user = authManager.user else {
+            print("❌ No user found - cannot generate pass")
             errorMessage = "Please log in to generate a pass"
             isGeneratingPass = false
             return
         }
         
+        print("✅ User found: \(user.sub)")
+        
         Task {
             do {
+                print("📡 Calling passService.generatePass...")
                 _ = try await passService.generatePass(gymId: gymDetail.id, auth0Id: user.sub)
+                print("✅ Pass generation API call completed successfully")
+                
                 await MainActor.run {
                     isGeneratingPass = false
                     isPresented = false
                     // Navigate to passes page
                     onNavigateToPasses?()
                     // Refresh passes
+                    print("🔄 Refreshing passes list...")
                     passService.fetchPasses(auth0Id: user.sub)
                 }
+                
+                // Wait a moment for the API to process the pass, then fetch active pass to trigger Live Activity
+                print("⏳ Waiting 1 second before fetching active pass for Live Activity...")
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                await MainActor.run {
+                    print("🔄 Fetching active pass to start Live Activity...")
+                    print("   User ID: \(user.sub)")
+                    passService.fetchActivePass(auth0Id: user.sub)
+                }
             } catch {
+                print("❌ Error in generatePassDirectly: \(error)")
                 await MainActor.run {
                     isGeneratingPass = false
                     
@@ -2219,6 +2805,8 @@ struct Pass: Codable, Identifiable, Equatable {
     let gymAddress: String?
     let gymCity: String?
     let gymPostcode: String?
+    let gymLatitude: Double?
+    let gymLongitude: Double?
     let passCode: String?
     let status: String?
     let validUntil: String?
@@ -2240,6 +2828,8 @@ struct Pass: Codable, Identifiable, Equatable {
         case gymAddress = "gym_address"
         case gymCity = "gym_city"
         case gymPostcode = "gym_postcode"
+        case gymLatitude = "gym_latitude"
+        case gymLongitude = "gym_longitude"
         case passCode = "pass_code"
         case status
         case validUntil = "valid_until"
@@ -2253,6 +2843,25 @@ struct Pass: Codable, Identifiable, Equatable {
     
     static func == (lhs: Pass, rhs: Pass) -> Bool {
         return lhs.id == rhs.id
+    }
+}
+
+/// Gym summary from `recent_gyms` on `/user/passes` (recently visited locations).
+/// Matches API shape: gym_id, gym_name, gym_chain_id, gym_chain_name, gym_chain_logo.
+struct RecentGym: Codable, Identifiable, Hashable {
+    var id: Int { gymId }
+    let gymId: Int
+    let gymName: String?
+    let gymChainId: Int?
+    let gymChainName: String?
+    let gymChainLogo: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case gymId = "gym_id"
+        case gymName = "gym_name"
+        case gymChainId = "gym_chain_id"
+        case gymChainName = "gym_chain_name"
+        case gymChainLogo = "gym_chain_logo"
     }
 }
 
@@ -2285,11 +2894,13 @@ struct PassResponse: Codable {
     let subscription: Subscription?
     let activePasses: [Pass]?
     let passHistory: [Pass]?
+    let recentGyms: [RecentGym]?
     
     enum CodingKeys: String, CodingKey {
         case subscription
         case activePasses = "active_passes"
         case passHistory = "pass_history"
+        case recentGyms = "recent_gyms"
     }
 }
 
@@ -2305,9 +2916,36 @@ class PassService: ObservableObject {
     @Published var guestPassesUsed: Int = 0
     @Published var guestPassesLimit: Int = 0
     @Published var subscription: Subscription?
+    @Published var recentGyms: [RecentGym] = []
     
     private let baseURL = "https://api.any-gym.com"
     private var cancellables = Set<AnyCancellable>()
+    
+    // Store the manager instance (type-erased for availability)
+    private var _liveActivityManager: Any?
+    
+    @available(iOS 16.1, *)
+    private func startLiveActivityIfAvailable(for pass: Pass) {
+        print("🔵 PassService: startLiveActivityIfAvailable called for pass \(pass.id)")
+        // Create manager if needed
+        if _liveActivityManager == nil {
+            print("   Creating LiveActivityManager...")
+            _liveActivityManager = LiveActivityManager()
+        }
+        // Cast and use - all within @available context
+        if let manager = _liveActivityManager as? LiveActivityManager {
+            print("   Calling manager.startLiveActivity...")
+            manager.startLiveActivity(for: pass)
+        } else {
+            print("   ❌ Failed to cast to LiveActivityManager")
+        }
+    }
+    
+    @available(iOS 16.1, *)
+    private func endLiveActivityIfAvailable() {
+        guard let manager = _liveActivityManager as? LiveActivityManager else { return }
+        manager.endLiveActivity()
+    }
     
     func fetchPasses(auth0Id: String) {
         isLoading = true
@@ -2367,6 +3005,10 @@ class PassService: ObservableObject {
                     // Extract pass history
                     self.passHistory = response.passHistory ?? []
                     
+                    // Up to 5 most recently visited gyms (API order)
+                    let recent = response.recentGyms ?? []
+                    self.recentGyms = Array(recent.prefix(5))
+                    
                     // Extract subscription data
                     if let subscription = response.subscription {
                         self.subscription = subscription
@@ -2384,16 +3026,26 @@ class PassService: ObservableObject {
                     self.isLoading = false
                     print("Fetched \(self.passes.count) active passes")
                     print("Fetched \(self.passHistory.count) historical passes")
+                    print("Fetched \(self.recentGyms.count) recent gyms (max 5)")
                 }
             )
             .store(in: &cancellables)
     }
     
     func generatePass(gymId: Int, auth0Id: String) async throws -> GeneratePassResponse {
+        print("═══════════════════════════════════════════════")
+        print("📤 PassService.generatePass() called")
+        print("   Gym ID: \(gymId)")
+        print("   Auth0 ID: \(auth0Id)")
+        print("═══════════════════════════════════════════════")
+        
         // Use /generate_pass endpoint (matching the API documentation)
         guard let url = URL(string: "\(baseURL)/generate_pass") else {
+            print("❌ Invalid URL for generate_pass")
             throw PassGenerationError.unknown("Invalid URL")
         }
+        
+        print("✅ URL created: \(url.absoluteString)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -2487,9 +3139,26 @@ class PassService: ObservableObject {
         
         // Handle different status codes
         switch httpResponse.statusCode {
-        case 200:
+        case 200, 201: // 200 OK or 201 Created
+            print("✅ Success status code: \(httpResponse.statusCode)")
             let decoder = JSONDecoder()
-            return try decoder.decode(GeneratePassResponse.self, from: data)
+            do {
+                let response = try decoder.decode(GeneratePassResponse.self, from: data)
+                print("✅ Successfully decoded GeneratePassResponse")
+                print("   Message: \(response.message)")
+                print("   Pass ID: \(response.passId?.description ?? "nil")")
+                return response
+            } catch {
+                print("⚠️ Failed to decode as GeneratePassResponse: \(error)")
+                print("   Response data: \(String(data: data, encoding: .utf8) ?? "nil")")
+                // If decoding fails but we have a success message, still treat as success
+                if errorMessage.lowercased().contains("success") {
+                    print("✅ Response indicates success, creating minimal response")
+                    // Create a minimal response - the pass was created successfully
+                    return GeneratePassResponse(message: errorMessage, passId: nil)
+                }
+                throw PassGenerationError.unknown("Failed to parse response: \(error.localizedDescription)")
+            }
             
         case 403:
             // ForbiddenException
@@ -2515,9 +3184,15 @@ class PassService: ObservableObject {
         }
     }
     
-    func fetchActivePass(auth0Id: String) {
+    func fetchActivePass(auth0Id: String, retryCount: Int = 0) {
+        print("═══════════════════════════════════════════════")
+        print("🔄 PassService.fetchActivePass() called")
+        print("   Retry count: \(retryCount)")
+        print("   Auth0 ID: \(auth0Id)")
+        print("═══════════════════════════════════════════════")
+        
         guard let url = URL(string: "\(baseURL)/user/active_pass") else {
-            print("Invalid URL for active pass")
+            print("❌ Invalid URL for active pass")
             return
         }
         
@@ -2526,11 +3201,17 @@ class PassService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(auth0Id, forHTTPHeaderField: "auth0_id")
         
+        print("📡 Requesting active pass from: \(url.absoluteString)")
+        print("   Method: GET")
+        print("   Headers: auth0_id=\(auth0Id)")
+        
         URLSession.shared.dataTaskPublisher(for: request)
             .map(\.data)
             .tryMap { data -> Pass? in
+                print("📥 Received response data (\(data.count) bytes)")
                 // Check if response is empty or null
                 if data.isEmpty {
+                    print("⚠️ Response data is empty")
                     return nil
                 }
                 
@@ -2539,35 +3220,714 @@ class PassService: ObservableObject {
                 decoder.dateDecodingStrategy = .iso8601
                 
                 do {
-                    return try decoder.decode(Pass.self, from: data)
+                    let pass = try decoder.decode(Pass.self, from: data)
+                    print("✅ Successfully decoded pass: \(pass.id)")
+                    return pass
                 } catch {
                     // If decoding fails, log and return nil
-                    print("Failed to decode active pass: \(error)")
+                    print("❌ Failed to decode active pass: \(error)")
                     if let jsonString = String(data: data, encoding: .utf8) {
-                        print("Response: \(jsonString)")
+                        print("📄 Response body: \(jsonString)")
                     }
                     return nil
                 }
             }
             .receive(on: DispatchQueue.main)
             .sink(
-                receiveCompletion: { completion in
+                receiveCompletion: { [weak self] completion in
                     if case .failure(let error) = completion {
-                        print("Error fetching active pass: \(error)")
+                        print("❌ Error fetching active pass: \(error.localizedDescription)")
+                        // Retry up to 2 times with increasing delays
+                        if retryCount < 2 {
+                            print("🔄 Retrying in \(retryCount + 1) second(s)...")
+                            Task {
+                                try? await Task.sleep(nanoseconds: UInt64((retryCount + 1) * 1_000_000_000))
+                                await MainActor.run {
+                                    self?.fetchActivePass(auth0Id: auth0Id, retryCount: retryCount + 1)
+                                }
+                            }
+                        } else {
+                            print("❌ Max retries reached. Live Activity will not start.")
+                        }
                     }
                 },
                 receiveValue: { [weak self] pass in
                     self?.activePass = pass
                     if let pass = pass {
-                        print("Active pass loaded: \(pass.gymName ?? "Unknown gym")")
+                        print("✅ Active pass loaded: \(pass.gymName ?? "Unknown gym")")
+                        print("   Pass ID: \(pass.id)")
+                        print("   Valid Until: \(pass.validUntil ?? "N/A")")
+                        print("   Status: \(pass.status ?? "unknown")")
+                        // Start Live Activity if available
+                        if #available(iOS 16.1, *) {
+                            print("   iOS 16.1+ detected, attempting to start Live Activity...")
+                            self?.startLiveActivityIfAvailable(for: pass)
+                        } else {
+                            print("   ⚠️ iOS version < 16.1, Live Activities not available")
+                        }
                     } else {
-                        print("No active pass found")
+                        print("ℹ️ No active pass found in response")
+                        // Retry once if no pass found and this is the first attempt
+                        if retryCount == 0 {
+                            print("🔄 Retrying in 2 seconds...")
+                            Task {
+                                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                await MainActor.run {
+                                    self?.fetchActivePass(auth0Id: auth0Id, retryCount: 1)
+                                }
+                            }
+                        } else {
+                            print("ℹ️ No active pass after retry. Ending any existing Live Activity.")
+                            // End Live Activity if no active pass
+                            if #available(iOS 16.1, *) {
+                                self?.endLiveActivityIfAvailable()
+                            }
+                        }
                     }
                 }
             )
             .store(in: &cancellables)
     }
     
+}
+
+// MARK: - Explore View
+struct ExploreView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @StateObject private var articleService = ArticleService()
+    @State private var showFilterSheet = false
+    @State private var selectedCategory: String? = nil
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color(red: 0.98, green: 0.98, blue: 0.98)
+                    .ignoresSafeArea()
+                
+                if articleService.isLoading {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color(red: 1.0, green: 0.42, blue: 0.42)))
+                            .scaleEffect(1.5)
+                        Text("Loading articles...")
+                            .poppins(.regular, size: 14)
+                            .foregroundColor(.secondary)
+                    }
+                } else if let errorMessage = articleService.errorMessage {
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 48))
+                            .foregroundColor(.gray)
+                        Text("Error loading articles")
+                            .poppins(.semibold, size: 18)
+                            .foregroundColor(.black)
+                        Text(errorMessage)
+                            .poppins(.regular, size: 14)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                        Button(action: {
+                            articleService.fetchArticles(category: selectedCategory)
+                        }) {
+                            Text("Retry")
+                                .poppins(.medium, size: 16)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(Color(red: 1.0, green: 0.42, blue: 0.42))
+                                .cornerRadius(8)
+                        }
+                    }
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            // Title Section
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Explore")
+                                        .poppins(.bold, size: 32)
+                                        .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                    
+                                    Text("Discover fitness tips and insights.")
+                                        .poppins(.regular, size: 16)
+                                        .foregroundColor(Color(red: 0.4, green: 0.4, blue: 0.4))
+                                }
+                                
+                                Spacer()
+                                
+                                // Filter Button
+                                Button(action: {
+                                    showFilterSheet = true
+                                }) {
+                                    Image(systemName: "line.3.horizontal.decrease.circle")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(Color(red: 0.4, green: 0.4, blue: 0.4))
+                                        .frame(width: 44, height: 44)
+                                        .background(Color(red: 0.95, green: 0.95, blue: 0.95))
+                                        .clipShape(Circle())
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 20)
+                            .padding(.bottom, 24)
+                            
+                            // Content: Articles or No Articles Found
+                            if articleService.isNotFoundError {
+                                // No articles found message (404 error)
+                                VStack(spacing: 16) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 48))
+                                        .foregroundColor(.gray)
+                                    Text("No articles found")
+                                        .poppins(.semibold, size: 18)
+                                        .foregroundColor(.black)
+                                    Text("Try selecting a different filter")
+                                        .poppins(.regular, size: 14)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 40)
+                                .padding(.bottom, 20)
+                            } else if articleService.articles.isEmpty {
+                                // Empty state (no filter selected)
+                                VStack(spacing: 16) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 48))
+                                        .foregroundColor(.gray)
+                                    Text("No articles available")
+                                        .poppins(.semibold, size: 18)
+                                        .foregroundColor(.black)
+                                    Text("Check back later for new content")
+                                        .poppins(.regular, size: 14)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 40)
+                                .padding(.bottom, 20)
+                            } else {
+                                // Articles List
+                                VStack(spacing: 16) {
+                                    ForEach(articleService.articles) { article in
+                                        NavigationLink(destination: ArticleDetailView(articleId: article.id)) {
+                                            ArticleCard(article: article)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 20)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showFilterSheet) {
+                FilterSheetView(selectedCategory: $selectedCategory, onCategorySelected: { category in
+                    selectedCategory = category
+                    articleService.fetchArticles(category: category)
+                    showFilterSheet = false
+                })
+            }
+            .onAppear {
+                if articleService.articles.isEmpty && !articleService.isLoading {
+                    articleService.fetchArticles(category: selectedCategory)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Filter Sheet View
+struct FilterSheetView: View {
+    @Binding var selectedCategory: String?
+    let onCategorySelected: (String?) -> Void
+    @Environment(\.dismiss) var dismiss
+    
+    let categories = ["Workouts", "News", "Promotions"]
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                // All Articles Option
+                Button(action: {
+                    onCategorySelected(nil)
+                }) {
+                    HStack {
+                        Text("All Articles")
+                            .poppins(.medium, size: 16)
+                            .foregroundColor(.black)
+                        Spacer()
+                        if selectedCategory == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundColor(Color(red: 1.0, green: 0.42, blue: 0.42))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(selectedCategory == nil ? Color(red: 0.98, green: 0.98, blue: 0.98) : Color.white)
+                }
+                
+                Divider()
+                
+                // Category Options
+                ForEach(categories, id: \.self) { category in
+                    Button(action: {
+                        onCategorySelected(category)
+                    }) {
+                        HStack {
+                            Text(category)
+                                .poppins(.medium, size: 16)
+                                .foregroundColor(.black)
+                            Spacer()
+                            if selectedCategory == category {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(Color(red: 1.0, green: 0.42, blue: 0.42))
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .background(selectedCategory == category ? Color(red: 0.98, green: 0.98, blue: 0.98) : Color.white)
+                    }
+                    
+                    if category != categories.last {
+                        Divider()
+                    }
+                }
+                
+                Spacer()
+            }
+            .navigationTitle("Filter Articles")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .poppins(.medium, size: 16)
+                    .foregroundColor(Color(red: 1.0, green: 0.42, blue: 0.42))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Article Card
+struct ArticleCard: View {
+    let article: Article
+    
+    var body: some View {
+        let _ = print("📸 ArticleCard for '\(article.title)': featuredImage = \(article.featuredImage ?? "nil")")
+        VStack(alignment: .leading, spacing: 0) {
+            // Article Image - Fixed aspect ratio container for consistent scaling
+            Group {
+                if let imageUrlString = article.featuredImage, !imageUrlString.isEmpty {
+                    if let url = URL(string: imageUrlString) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .empty:
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 200)
+                                    .overlay(
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: Color(red: 1.0, green: 0.42, blue: 0.42)))
+                                    )
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(maxWidth: .infinity)
+                                    .accessibilityLabel(article.featuredImageAlt ?? article.title)
+                            case .failure(let error):
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 200)
+                                    .overlay(
+                                        VStack(spacing: 8) {
+                                            Image(systemName: "photo")
+                                                .font(.system(size: 32))
+                                                .foregroundColor(.gray)
+                                            Text("Failed to load")
+                                                .poppins(.regular, size: 12)
+                                                .foregroundColor(.gray)
+                                        }
+                                    )
+                                    .accessibilityLabel("Image failed to load for \(article.title)")
+                                    .onAppear {
+                                        print("⚠️ Image failed to load for article \(article.id): \(error.localizedDescription)")
+                                        print("   URL: \(imageUrlString)")
+                                    }
+                            @unknown default:
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 200)
+                            }
+                        }
+                    } else {
+                        Rectangle()
+                            .fill(Color.gray.opacity(0.2))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 200)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .font(.system(size: 32))
+                                    .foregroundColor(.gray)
+                            )
+                            .accessibilityLabel("Invalid image URL for \(article.title)")
+                            .onAppear {
+                                print("⚠️ Invalid image URL for article \(article.id): \(imageUrlString)")
+                            }
+                    }
+                } else {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 200)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .font(.system(size: 32))
+                                .foregroundColor(.gray)
+                        )
+                        .accessibilityLabel("No image available for \(article.title)")
+                        .onAppear {
+                            print("ℹ️ No featured_image for article \(article.id)")
+                        }
+                }
+            }
+            
+            // Article Content
+            VStack(alignment: .leading, spacing: 12) {
+                Text(article.title)
+                    .poppins(.semibold, size: 20)
+                    .foregroundColor(.black)
+                    .lineLimit(2)
+                
+                // Headline (or excerpt as fallback)
+                if let headline = article.headline, !headline.isEmpty {
+                    Text(headline)
+                        .poppins(.medium, size: 16)
+                        .foregroundColor(Color(red: 0.3, green: 0.3, blue: 0.3))
+                        .lineLimit(2)
+                } else if let excerpt = article.excerpt, !excerpt.isEmpty {
+                    Text(excerpt)
+                        .poppins(.regular, size: 14)
+                        .foregroundColor(Color(red: 0.4, green: 0.4, blue: 0.4))
+                        .lineLimit(3)
+                }
+                
+                if let publishedDate = article.publishedDate {
+                    Text(formatDate(publishedDate))
+                        .poppins(.regular, size: 12)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(16)
+        }
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+    }
+    
+    private func formatDate(_ dateString: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        if let date = formatter.date(from: dateString) {
+            let displayFormatter = DateFormatter()
+            displayFormatter.dateStyle = .medium
+            displayFormatter.timeStyle = .none
+            return displayFormatter.string(from: date)
+        }
+        
+        // Fallback: try without fractional seconds
+        let fallbackFormatter = ISO8601DateFormatter()
+        if let date = fallbackFormatter.date(from: dateString) {
+            let displayFormatter = DateFormatter()
+            displayFormatter.dateStyle = .medium
+            displayFormatter.timeStyle = .none
+            return displayFormatter.string(from: date)
+        }
+        
+        return dateString
+    }
+}
+
+// MARK: - Article Detail View
+struct ArticleDetailView: View {
+    let articleId: String
+    @StateObject private var articleService = ArticleService()
+    @State private var articleDetail: ArticleDetail?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @Environment(\.presentationMode) var presentationMode
+    @State private var cancellables = Set<AnyCancellable>()
+    
+    var body: some View {
+        ZStack {
+            Color(red: 0.98, green: 0.98, blue: 0.98)
+                .ignoresSafeArea()
+            
+            if isLoading {
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: Color(red: 1.0, green: 0.42, blue: 0.42)))
+                        .scaleEffect(1.5)
+                    Text("Loading article...")
+                        .poppins(.regular, size: 14)
+                        .foregroundColor(.secondary)
+                }
+            } else if let errorMessage = errorMessage {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 48))
+                        .foregroundColor(.gray)
+                    Text("Error loading article")
+                        .poppins(.semibold, size: 18)
+                        .foregroundColor(.black)
+                    Text(errorMessage)
+                        .poppins(.regular, size: 14)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                    Button(action: {
+                        loadArticle()
+                    }) {
+                        Text("Retry")
+                            .poppins(.medium, size: 16)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .background(Color(red: 1.0, green: 0.42, blue: 0.42))
+                            .cornerRadius(8)
+                    }
+                }
+            } else if let articleDetail = articleDetail {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Hero Image
+                        if let heroImage = articleDetail.heroImage,
+                           let fields = heroImage.fields,
+                           let images = fields.image,
+                           let firstImage = images.first,
+                           let imageUrl = firstImage.secureUrl ?? firstImage.url,
+                           let url = URL(string: imageUrl) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .empty:
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.2))
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 250)
+                                        .overlay(
+                                            ProgressView()
+                                                .progressViewStyle(CircularProgressViewStyle(tint: Color(red: 1.0, green: 0.42, blue: 0.42)))
+                                        )
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(maxWidth: .infinity)
+                                case .failure:
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.2))
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 250)
+                                        .overlay(
+                                            Image(systemName: "photo")
+                                                .font(.system(size: 32))
+                                                .foregroundColor(.gray)
+                                        )
+                                @unknown default:
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.2))
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 250)
+                                }
+                            }
+                        }
+                        
+                        // Content
+                        VStack(alignment: .leading, spacing: 24) {
+                            // Title
+                            Text(articleDetail.title)
+                                .poppins(.bold, size: 32)
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 24)
+                            
+                            // Headline
+                            if let headline = articleDetail.headline {
+                                renderRichTextContent(headline)
+                                    .padding(.horizontal, 20)
+                            }
+                            
+                            // Body
+                            if let body = articleDetail.body {
+                                renderRichTextContent(body)
+                                    .padding(.horizontal, 20)
+                                    .padding(.bottom, 24)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            loadArticle()
+        }
+    }
+    
+    private func loadArticle() {
+        isLoading = true
+        errorMessage = nil
+        
+        articleService.fetchArticleDetail(articleId: articleId)
+            .sink(
+                receiveCompletion: { completion in
+                    isLoading = false
+                    if case .failure(let error) = completion {
+                        var errorMsg = "Failed to load article."
+                        
+                        if let urlError = error as? URLError {
+                            switch urlError.code {
+                            case .notConnectedToInternet, .networkConnectionLost:
+                                errorMsg = "No internet connection."
+                            case .timedOut:
+                                errorMsg = "Request timed out."
+                            default:
+                                errorMsg = "Network error: \(urlError.localizedDescription)"
+                            }
+                        } else if let nsError = error as NSError? {
+                            if nsError.domain == "ArticleService" {
+                                errorMsg = "Server error: \(nsError.localizedDescription)"
+                            } else {
+                                errorMsg = "Error: \(nsError.localizedDescription)"
+                            }
+                        }
+                        
+                        errorMessage = errorMsg
+                        print("Error loading article detail: \(error)")
+                    }
+                },
+                receiveValue: { detail in
+                    articleDetail = detail
+                    isLoading = false
+                }
+            )
+            .store(in: &cancellables)
+    }
+    
+    @ViewBuilder
+    private func renderRichTextContent(_ content: RichTextContent) -> some View {
+        if let nodes = content.content {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(Array(nodes.enumerated()), id: \.offset) { index, node in
+                    renderContentNode(node)
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func renderContentNode(_ node: ContentNode) -> some View {
+        switch node.nodeType {
+        case "paragraph":
+            renderParagraphNode(node)
+        case "heading-2":
+            renderHeadingNode(node)
+        default:
+            renderParagraphNode(node)
+        }
+    }
+    
+    @ViewBuilder
+    private func renderParagraphNode(_ node: ContentNode) -> some View {
+        if let textNodes = node.content {
+            // Combine all text nodes into a single Text view to prevent line breaks
+            buildCombinedText(from: textNodes, isHeading: false)
+        }
+    }
+    
+    @ViewBuilder
+    private func renderHeadingNode(_ node: ContentNode) -> some View {
+        if let textNodes = node.content {
+            // Combine all text nodes into a single Text view to prevent line breaks
+            buildCombinedText(from: textNodes, isHeading: true)
+                .padding(.top, 8)
+        }
+    }
+    
+    // Build a single Text view from multiple text nodes, applying formatting correctly
+    @ViewBuilder
+    private func buildCombinedText(from nodes: [ContentNode], isHeading: Bool) -> some View {
+        let text = buildTextFromNodes(nodes, isHeading: isHeading)
+        if isHeading {
+            text
+                .padding(.top, 16)
+        } else {
+            text
+                .lineSpacing(4)
+        }
+    }
+    
+    // Build text by combining nodes - returns Text that can be styled
+    private func buildTextFromNodes(_ nodes: [ContentNode], isHeading: Bool) -> Text {
+        let textParts = getTextPiecesFromNodes(nodes, isHeading: isHeading)
+        
+        // Combine all text parts
+        if textParts.isEmpty {
+            return Text("")
+        } else {
+            return textParts.reduce(Text("")) { result, text in
+                result + text
+            }
+        }
+    }
+    
+    // Helper to get text pieces from nodes recursively
+    private func getTextPiecesFromNodes(_ nodes: [ContentNode], isHeading: Bool) -> [Text] {
+        var textParts: [Text] = []
+        
+        for node in nodes {
+            if let value = node.value {
+                let isBold = node.marks?.contains { $0.type == "bold" } ?? false
+                
+                let textPiece: Text
+                if isHeading {
+                    textPiece = Text(value)
+                        .font(.poppins(isBold ? .bold : .semibold, size: 24))
+                        .foregroundColor(.black)
+                } else {
+                    textPiece = Text(value)
+                        .font(.poppins(isBold ? .semibold : .regular, size: 16))
+                        .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                }
+                textParts.append(textPiece)
+            } else if let nestedContent = node.content {
+                let nestedParts = getTextPiecesFromNodes(nestedContent, isHeading: isHeading)
+                textParts.append(contentsOf: nestedParts)
+            }
+        }
+        
+        return textParts
+    }
+    
+    private func flattenTextContent(_ nodes: [ContentNode]) -> String {
+        return nodes.compactMap { node -> String? in
+            if let value = node.value {
+                return value
+            } else if let nestedContent = node.content {
+                return flattenTextContent(nestedContent)
+            }
+            return nil
+        }.joined(separator: "")
+    }
 }
 
 // MARK: - My Passes View
@@ -2816,6 +4176,40 @@ struct MyPassesView: View {
                     .padding(.bottom, 24)
                 }
                 
+                // Recent Passes — horizontal carousel (from recent_gyms on /user/passes)
+                if !passService.recentGyms.isEmpty {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.counterclockwise.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                            Text("Recent Passes")
+                                .poppins(.bold, size: 22)
+                                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        GeometryReader { geometry in
+                            let cardWidth = geometry.size.width * (2.0 / 3.0)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 16) {
+                                    ForEach(passService.recentGyms) { gym in
+                                        RecentPassGymCard(
+                                            gym: gym,
+                                            cardWidth: cardWidth,
+                                            passService: passService,
+                                            auth0Id: authManager.user?.sub
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                            }
+                        }
+                        .frame(height: RecentPassGymCard.carouselHeight)
+                    }
+                    .padding(.bottom, 24)
+                }
+                
                 // Pass History Section
                 if !passService.passHistory.isEmpty {
                     VStack(alignment: .leading, spacing: 16) {
@@ -2862,10 +4256,143 @@ struct MyPassesView: View {
     }
 }
 
+// MARK: - Recent Pass Gym Card (carousel)
+private struct RecentPassGymCard: View {
+    /// ScrollView row height (matches compact card content; no flexible Spacer).
+    static let carouselHeight: CGFloat = 192
+    
+    let gym: RecentGym
+    let cardWidth: CGFloat
+    let passService: PassService
+    let auth0Id: String?
+    
+    @State private var isGenerating = false
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
+    
+    private var title: String {
+        if let name = gym.gymName, !name.isEmpty { return name }
+        return gym.gymChainName ?? "Gym #\(gym.gymId)"
+    }
+    
+    /// Chain line under the gym name (sample API always sends gym_chain_name).
+    private var chainLabel: String? {
+        guard let chain = gym.gymChainName, !chain.isEmpty else { return nil }
+        if chain.caseInsensitiveCompare(title) == .orderedSame { return nil }
+        return chain
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            chainLogo
+            Text(title)
+                .poppins(.semibold, size: 15)
+                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            if let chainLabel {
+                Text(chainLabel)
+                    .poppins(.medium, size: 12)
+                    .foregroundColor(Color(red: 0.45, green: 0.45, blue: 0.45))
+                    .lineLimit(1)
+            }
+            
+            Button(action: {
+                Task { @MainActor in
+                    await generatePassTapped()
+                }
+            }) {
+                HStack(spacing: 6) {
+                    if isGenerating {
+                        ProgressView()
+                            .scaleEffect(0.85)
+                    } else {
+                        Image(systemName: "ticket.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    Text(isGenerating ? "Generating…" : "New pass")
+                        .poppins(.semibold, size: 14)
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    (auth0Id == nil || isGenerating)
+                    ? Color(red: 0.75, green: 0.75, blue: 0.75)
+                    : Color(red: 1.0, green: 0.42, blue: 0.42)
+                )
+                .cornerRadius(10)
+            }
+            .disabled(auth0Id == nil || isGenerating)
+        }
+        .padding(12)
+        .frame(width: cardWidth, alignment: .topLeading)
+        .background(Color.white)
+        .cornerRadius(14)
+        .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
+        .alert("Couldn't generate pass", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Something went wrong.")
+        }
+    }
+    
+    @MainActor
+    private func generatePassTapped() async {
+        guard let auth0Id = auth0Id else { return }
+        isGenerating = true
+        defer { isGenerating = false }
+        do {
+            _ = try await passService.generatePass(gymId: gym.gymId, auth0Id: auth0Id)
+            passService.fetchPasses(auth0Id: auth0Id)
+            passService.fetchActivePass(auth0Id: auth0Id)
+        } catch let passError as PassGenerationError {
+            errorMessage = passError.errorDescription ?? "Try again later."
+            showErrorAlert = true
+        } catch {
+            errorMessage = error.localizedDescription
+            showErrorAlert = true
+        }
+    }
+    
+    @ViewBuilder
+    private var chainLogo: some View {
+        if let logoUrl = gym.gymChainLogo, !logoUrl.isEmpty, let url = URL(string: logoUrl) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .empty:
+                    ProgressView()
+                        .frame(width: 44, height: 44)
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 44, height: 44)
+                        .cornerRadius(8)
+                case .failure:
+                    placeholderLogo
+                @unknown default:
+                    EmptyView()
+                }
+            }
+        } else {
+            placeholderLogo
+        }
+    }
+    
+    private var placeholderLogo: some View {
+        Image(systemName: "building.2.fill")
+            .font(.system(size: 22))
+            .foregroundColor(Color(red: 0.5, green: 0.5, blue: 0.5))
+            .frame(width: 44, height: 44)
+    }
+}
+
 // MARK: - Active Pass Card
 struct ActivePassCard: View {
     let pass: Pass
-    @State private var showAddToWallet = false
+    @State private var showDirectionsPicker = false
     
     var gymDisplayName: String {
         if let gymName = pass.gymName, !gymName.isEmpty {
@@ -2889,6 +4416,18 @@ struct ActivePassCard: View {
             components.append(postcode)
         }
         return components.joined(separator: ", ")
+    }
+    
+    /// Non-nil, finite coordinates suitable for routing (API `gym_latitude` / `gym_longitude`).
+    private var hasDirectionsCoordinates: Bool {
+        guard let lat = pass.gymLatitude, let lon = pass.gymLongitude else { return false }
+        guard lat.isFinite, lon.isFinite else { return false }
+        return (-90...90).contains(lat) && (-180...180).contains(lon)
+    }
+    
+    private var googleMapsAppAvailable: Bool {
+        guard let url = URL(string: "comgooglemaps://") else { return false }
+        return UIApplication.shared.canOpenURL(url)
     }
     
     var formattedValidUntil: String {
@@ -3005,30 +4544,92 @@ struct ActivePassCard: View {
                 .foregroundColor(Color(red: 0.4, green: 0.4, blue: 0.4))
                 .frame(maxWidth: .infinity)
             
-            // Add to Apple Wallet button
-            if PKAddPassesViewController.canAddPasses() {
-                Button(action: {
-                    addToAppleWallet()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 16))
-                        Text("Add to Apple Wallet")
-                            .poppins(.semibold, size: 16)
+            // Add to Apple Wallet + Get directions
+            VStack(spacing: 10) {
+                if PKAddPassesViewController.canAddPasses() {
+                    Button(action: {
+                        addToAppleWallet()
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 16))
+                            Text("Add to Apple Wallet")
+                                .poppins(.semibold, size: 16)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.black)
+                        .cornerRadius(12)
                     }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.black)
-                    .cornerRadius(12)
                 }
-                .padding(.top, 8)
+                
+                if hasDirectionsCoordinates {
+                    Button(action: handleGetDirectionsTap) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
+                                .font(.system(size: 16))
+                            Text("Get directions")
+                                .poppins(.semibold, size: 16)
+                        }
+                        .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.black.opacity(0.12), lineWidth: 1)
+                        )
+                    }
+                    .confirmationDialog(
+                        "Get directions",
+                        isPresented: $showDirectionsPicker,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Apple Maps") {
+                            openDirectionsInAppleMaps()
+                        }
+                        Button("Google Maps") {
+                            openDirectionsInGoogleMaps()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Choose an app to open turn-by-turn directions.")
+                    }
+                }
             }
+            .padding(.top, 8)
         }
         .padding(20)
         .background(Color(red: 0.85, green: 0.95, blue: 0.85)) // Light green background
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
+    }
+    
+    private func handleGetDirectionsTap() {
+        guard hasDirectionsCoordinates else { return }
+        if googleMapsAppAvailable {
+            showDirectionsPicker = true
+        } else {
+            openDirectionsInAppleMaps()
+        }
+    }
+    
+    private func openDirectionsInAppleMaps() {
+        guard let lat = pass.gymLatitude, let lon = pass.gymLongitude else { return }
+        let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        let placemark = MKPlacemark(coordinate: coordinate)
+        let mapItem = MKMapItem(placemark: placemark)
+        mapItem.name = gymDisplayName
+        mapItem.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving])
+    }
+    
+    private func openDirectionsInGoogleMaps() {
+        guard let lat = pass.gymLatitude, let lon = pass.gymLongitude else { return }
+        let encoded = "\(lat),\(lon)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "\(lat),\(lon)"
+        guard let url = URL(string: "comgooglemaps://?daddr=\(encoded)&directionsmode=driving") else { return }
+        UIApplication.shared.open(url)
     }
     
     private func addToAppleWallet() {
@@ -3751,6 +5352,7 @@ struct ProfileView: View {
     @State private var cancelErrorMessage: String?
     @State private var showCancelError = false
     @State private var showChangeSubscription = false
+    @State private var showEditProfile = false
     
     enum ProfileTab: String, CaseIterable {
         case profile = "Profile"
@@ -3784,6 +5386,20 @@ struct ProfileView: View {
             .background(Color(red: 0.98, green: 0.98, blue: 0.98))
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if selectedTab == .profile {
+                        Button("Edit") {
+                            showEditProfile = true
+                        }
+                        .poppins(.regular, size: 16)
+                    }
+                }
+            }
+            .sheet(isPresented: $showEditProfile) {
+                EditProfileView(isPresented: $showEditProfile)
+                    .environmentObject(authManager)
+            }
             .sheet(isPresented: $showChangeSubscription) {
                 ChangeSubscriptionView(
                     isPresented: $showChangeSubscription,
@@ -3883,96 +5499,158 @@ struct ProfileView: View {
                         .padding(.vertical, 40)
                     }
                     
-                    // Personal Info Section
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Personal info")
-                            .poppins(.bold, size: 22)
-                            .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                    if let profile = authManager.userProfile {
+                        // Personal Details Section
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Personal Details")
+                                .poppins(.bold, size: 22)
+                                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                .padding(.horizontal, 20)
+                                .padding(.top, 32)
+                                .padding(.bottom, 16)
+                            
+                            VStack(spacing: 0) {
+                                // Full Name
+                                PersonalInfoRow(
+                                    label: "Full Name",
+                                    value: profile.fullName ?? "Not provided"
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // Email
+                                PersonalInfoRow(
+                                    label: "Email",
+                                    value: profile.email ?? "Not provided"
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // Date of Birth
+                                PersonalInfoRow(
+                                    label: "Date of Birth",
+                                    value: formatDateOfBirth(profile.dateOfBirth)
+                                )
+                            }
+                            .background(Color.white)
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                             .padding(.horizontal, 20)
-                            .padding(.top, 32)
-                            .padding(.bottom, 16)
+                        }
                         
-                        if let profile = authManager.userProfile {
-                            // Email
-                            PersonalInfoRow(
-                                label: "Email",
-                                value: profile.email ?? "Not provided"
-                            )
+                        // Address Section
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Address")
+                                .poppins(.bold, size: 22)
+                                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                .padding(.horizontal, 20)
+                                .padding(.top, 32)
+                                .padding(.bottom, 16)
                             
-                            Divider()
-                                .padding(.leading, 20)
+                            VStack(spacing: 0) {
+                                // Address Line 1
+                                PersonalInfoRow(
+                                    label: "Address Line 1",
+                                    value: profile.addressLine1 ?? "Not provided"
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // Address Line 2
+                                PersonalInfoRow(
+                                    label: "Address Line 2",
+                                    value: profile.addressLine2 ?? "Not provided"
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // City
+                                PersonalInfoRow(
+                                    label: "City",
+                                    value: profile.addressCity ?? "Not provided"
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // Postcode
+                                PersonalInfoRow(
+                                    label: "Postcode",
+                                    value: profile.addressPostcode ?? "Not provided"
+                                )
+                            }
+                            .background(Color.white)
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                            .padding(.horizontal, 20)
+                        }
+                        
+                        // Emergency Contact Section
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Emergency Contact")
+                                .poppins(.bold, size: 22)
+                                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                .padding(.horizontal, 20)
+                                .padding(.top, 32)
+                                .padding(.bottom, 16)
                             
-                            // Full Name
-                            PersonalInfoRow(
-                                label: "Name",
-                                value: profile.fullName ?? "Not provided"
-                            )
+                            VStack(spacing: 0) {
+                                // Emergency Contact Name
+                                PersonalInfoRow(
+                                    label: "Emergency Contact Name",
+                                    value: profile.emergencyContactName ?? "Not provided"
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // Emergency Contact Number
+                                PersonalInfoRow(
+                                    label: "Emergency Contact Number",
+                                    value: profile.emergencyContactNumber ?? "Not provided"
+                                )
+                            }
+                            .background(Color.white)
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                            .padding(.horizontal, 20)
+                        }
+                        
+                        // Notification Preferences Section
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Notification Preferences")
+                                .poppins(.bold, size: 22)
+                                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                .padding(.horizontal, 20)
+                                .padding(.top, 32)
+                                .padding(.bottom, 16)
                             
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // Address Line 1
-                            PersonalInfoRow(
-                                label: "Address Line 1",
-                                value: profile.addressLine1 ?? "Not provided"
-                            )
-                            
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // Address Line 2
-                            PersonalInfoRow(
-                                label: "Address Line 2",
-                                value: profile.addressLine2 ?? "Not provided"
-                            )
-                            
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // City
-                            PersonalInfoRow(
-                                label: "City",
-                                value: profile.addressCity ?? "Not provided"
-                            )
-                            
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // Postcode
-                            PersonalInfoRow(
-                                label: "Postcode",
-                                value: profile.addressPostcode ?? "Not provided"
-                            )
-                            
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // Date of Birth
-                            PersonalInfoRow(
-                                label: "Date of Birth",
-                                value: formatDateOfBirth(profile.dateOfBirth)
-                            )
-                            
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // Emergency Contact Name
-                            PersonalInfoRow(
-                                label: "Emergency Contact Name",
-                                value: profile.emergencyContactName ?? "Not provided"
-                            )
-                            
-                            Divider()
-                                .padding(.leading, 20)
-                            
-                            // Emergency Contact Number
-                            PersonalInfoRow(
-                                label: "Emergency Contact Number",
-                                value: profile.emergencyContactNumber ?? "Not provided"
-                            )
+                            VStack(spacing: 0) {
+                                // Pass Notifications
+                                NotificationPreferenceRow(
+                                    label: "Pass Notifications",
+                                    isEnabled: profile.passNotificationConsent ?? false
+                                )
+                                
+                                Divider()
+                                    .padding(.leading, 20)
+                                
+                                // Marketing Communications
+                                NotificationPreferenceRow(
+                                    label: "Marketing Communications",
+                                    isEnabled: profile.marketingConsent ?? false
+                                )
+                            }
+                            .background(Color.white)
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                            .padding(.horizontal, 20)
                         }
                     }
-                    .padding(.top, 24)
                     
                     Spacer(minLength: 40)
                 
@@ -4423,6 +6101,454 @@ struct PersonalInfoRow: View {
     }
 }
 
+// MARK: - Notification Preference Row
+struct NotificationPreferenceRow: View {
+    let label: String
+    let isEnabled: Bool
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .poppins(.regular, size: 16)
+                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+            
+            Spacer()
+            
+            Toggle("", isOn: .constant(isEnabled))
+                .labelsHidden()
+                .disabled(true)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.white)
+    }
+}
+
+// MARK: - Edit Profile View
+struct EditProfileView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @Binding var isPresented: Bool
+    
+    @State private var fullName: String = ""
+    @State private var addressLine1: String = ""
+    @State private var addressLine2: String = ""
+    @State private var addressCity: String = ""
+    @State private var addressPostcode: String = ""
+    @State private var dateOfBirth: Date = Date()
+    @State private var hasDateOfBirth: Bool = false
+    @State private var emergencyContactName: String = ""
+    @State private var emergencyContactNumber: String = ""
+    @State private var passNotificationConsent: Bool = false
+    @State private var marketingConsent: Bool = false
+    
+    @State private var isLoading: Bool = false
+    @State private var errorMessage: String?
+    @State private var showError: Bool = false
+    @State private var showDatePicker: Bool = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Personal Details Section
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Personal Details")
+                            .poppins(.bold, size: 22)
+                            .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                            .padding(.horizontal, 20)
+                            .padding(.top, 20)
+                            .padding(.bottom, 16)
+                        
+                        VStack(spacing: 0) {
+                            // Full Name
+                            EditProfileTextField(
+                                label: "Full Name",
+                                text: $fullName,
+                                placeholder: "Enter your full name"
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 20)
+                            
+                            // Date of Birth
+                            EditProfileDateField(
+                                label: "Date of Birth",
+                                date: $dateOfBirth,
+                                hasDate: $hasDateOfBirth,
+                                showDatePicker: $showDatePicker
+                            )
+                        }
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        .padding(.horizontal, 20)
+                    }
+                    
+                    // Address Section
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Address")
+                            .poppins(.bold, size: 22)
+                            .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                            .padding(.horizontal, 20)
+                            .padding(.top, 32)
+                            .padding(.bottom, 16)
+                        
+                        VStack(spacing: 0) {
+                            // Address Line 1
+                            EditProfileTextField(
+                                label: "Address Line 1",
+                                text: $addressLine1,
+                                placeholder: "Enter address line 1"
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 20)
+                            
+                            // Address Line 2
+                            EditProfileTextField(
+                                label: "Address Line 2",
+                                text: $addressLine2,
+                                placeholder: "Enter address line 2 (optional)"
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 20)
+                            
+                            // City
+                            EditProfileTextField(
+                                label: "City",
+                                text: $addressCity,
+                                placeholder: "Enter city"
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 20)
+                            
+                            // Postcode
+                            EditProfileTextField(
+                                label: "Postcode",
+                                text: $addressPostcode,
+                                placeholder: "Enter postcode"
+                            )
+                        }
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        .padding(.horizontal, 20)
+                    }
+                    
+                    // Emergency Contact Section
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Emergency Contact")
+                            .poppins(.bold, size: 22)
+                            .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                            .padding(.horizontal, 20)
+                            .padding(.top, 32)
+                            .padding(.bottom, 16)
+                        
+                        VStack(spacing: 0) {
+                            // Emergency Contact Name
+                            EditProfileTextField(
+                                label: "Emergency Contact Name",
+                                text: $emergencyContactName,
+                                placeholder: "Enter emergency contact name"
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 20)
+                            
+                            // Emergency Contact Number
+                            EditProfileTextField(
+                                label: "Emergency Contact Number",
+                                text: $emergencyContactNumber,
+                                placeholder: "Enter emergency contact number"
+                            )
+                        }
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        .padding(.horizontal, 20)
+                    }
+                    
+                    // Notification Preferences Section
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Notification Preferences")
+                            .poppins(.bold, size: 22)
+                            .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                            .padding(.horizontal, 20)
+                            .padding(.top, 32)
+                            .padding(.bottom, 16)
+                        
+                        VStack(spacing: 0) {
+                            // Pass Notifications
+                            EditProfileToggleRow(
+                                label: "Pass Notifications",
+                                isOn: $passNotificationConsent
+                            )
+                            
+                            Divider()
+                                .padding(.leading, 20)
+                            
+                            // Marketing Communications
+                            EditProfileToggleRow(
+                                label: "Marketing Communications",
+                                isOn: $marketingConsent
+                            )
+                        }
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        .padding(.horizontal, 20)
+                    }
+                    
+                    // Save Button
+                    Button(action: saveProfile) {
+                        HStack {
+                            if isLoading {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            }
+                            Text(isLoading ? "Saving..." : "Save Changes")
+                                .poppins(.semibold, size: 16)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(isLoading ? Color.gray : Color(red: 1.0, green: 0.42, blue: 0.42))
+                        .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 32)
+                    .padding(.bottom, 40)
+                    .disabled(isLoading)
+                }
+            }
+            .background(Color(red: 0.98, green: 0.98, blue: 0.98))
+            .navigationTitle("Edit Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                    .poppins(.regular, size: 16)
+                }
+            }
+            .sheet(isPresented: $showDatePicker) {
+                NavigationView {
+                    VStack {
+                        DatePicker(
+                            "Date of Birth",
+                            selection: $dateOfBirth,
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.wheel)
+                        
+                        if hasDateOfBirth {
+                            Button(action: {
+                                hasDateOfBirth = false
+                                showDatePicker = false
+                            }) {
+                                Text("Clear Date")
+                                    .poppins(.regular, size: 16)
+                                    .foregroundColor(.red)
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color.red.opacity(0.1))
+                                    .cornerRadius(8)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 10)
+                        }
+                    }
+                    .navigationTitle("Date of Birth")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Cancel") {
+                                showDatePicker = false
+                            }
+                        }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") {
+                                hasDateOfBirth = true
+                                showDatePicker = false
+                            }
+                        }
+                    }
+                }
+            }
+            .alert("Error", isPresented: $showError) {
+                Button("OK", role: .cancel) {
+                    showError = false
+                }
+            } message: {
+                Text(errorMessage ?? "Failed to update profile. Please try again.")
+            }
+            .onAppear {
+                loadProfileData()
+            }
+        }
+    }
+    
+    private func loadProfileData() {
+        guard let profile = authManager.userProfile else { return }
+        
+        fullName = profile.fullName ?? ""
+        addressLine1 = profile.addressLine1 ?? ""
+        addressLine2 = profile.addressLine2 ?? ""
+        addressCity = profile.addressCity ?? ""
+        addressPostcode = profile.addressPostcode ?? ""
+        emergencyContactName = profile.emergencyContactName ?? ""
+        emergencyContactNumber = profile.emergencyContactNumber ?? ""
+        passNotificationConsent = profile.passNotificationConsent ?? false
+        marketingConsent = profile.marketingConsent ?? false
+        
+        // Parse date of birth
+        if let dobString = profile.dateOfBirth, !dobString.isEmpty {
+            let dateFormatter = ISO8601DateFormatter()
+            dateFormatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+            if let date = dateFormatter.date(from: dobString) {
+                dateOfBirth = date
+                hasDateOfBirth = true
+            }
+        }
+    }
+    
+    private func saveProfile() {
+        guard let auth0Id = authManager.user?.sub else {
+            errorMessage = "User not authenticated"
+            showError = true
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        // Format date of birth
+        var dobString: String? = nil
+        if hasDateOfBirth {
+            let dateFormatter = ISO8601DateFormatter()
+            dateFormatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+            dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+            dobString = dateFormatter.string(from: dateOfBirth)
+        }
+        
+        authManager.updateUserProfile(
+            auth0Id: auth0Id,
+            fullName: fullName.isEmpty ? nil : fullName,
+            addressLine1: addressLine1.isEmpty ? nil : addressLine1,
+            addressLine2: addressLine2.isEmpty ? nil : addressLine2,
+            addressCity: addressCity.isEmpty ? nil : addressCity,
+            addressPostcode: addressPostcode.isEmpty ? nil : addressPostcode,
+            dateOfBirth: dobString,
+            emergencyContactName: emergencyContactName.isEmpty ? nil : emergencyContactName,
+            emergencyContactNumber: emergencyContactNumber.isEmpty ? nil : emergencyContactNumber,
+            passNotificationConsent: passNotificationConsent,
+            marketingConsent: marketingConsent
+        ) { result in
+            isLoading = false
+            
+            switch result {
+            case .success:
+                // Refresh user data to get updated profile
+                authManager.fetchUserData(auth0Id: auth0Id)
+                isPresented = false
+            case .failure(let error):
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+}
+
+// MARK: - Edit Profile Text Field
+struct EditProfileTextField: View {
+    let label: String
+    @Binding var text: String
+    let placeholder: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .poppins(.regular, size: 14)
+                .foregroundColor(.secondary)
+            
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .poppins(.regular, size: 16)
+                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.white)
+    }
+}
+
+// MARK: - Edit Profile Date Field
+struct EditProfileDateField: View {
+    let label: String
+    @Binding var date: Date
+    @Binding var hasDate: Bool
+    @Binding var showDatePicker: Bool
+    
+    private var dateString: String {
+        if hasDate {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .long
+            return formatter.string(from: date)
+        }
+        return "Not set"
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .poppins(.regular, size: 14)
+                .foregroundColor(.secondary)
+            
+            Button(action: {
+                showDatePicker = true
+            }) {
+                HStack {
+                    Text(dateString)
+                        .poppins(.regular, size: 16)
+                        .foregroundColor(hasDate ? Color(red: 0.2, green: 0.2, blue: 0.2) : .secondary)
+                    Spacer()
+                    Image(systemName: "calendar")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.white)
+    }
+}
+
+// MARK: - Edit Profile Toggle Row
+struct EditProfileToggleRow: View {
+    let label: String
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .poppins(.regular, size: 16)
+                .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+            
+            Spacer()
+            
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(Color.white)
+    }
+}
+
 // MARK: - Main Tab View
 struct MainTabView: View {
     @EnvironmentObject var authManager: AuthManager
@@ -4438,6 +6564,9 @@ struct MainTabView: View {
                         selectedTab = .myPasses
                     })
                     .environmentObject(authManager)
+                case .explore:
+                    ExploreView()
+                        .environmentObject(authManager)
                 case .myPasses:
                     MyPassesView()
                         .environmentObject(authManager)
@@ -5376,4 +7505,5 @@ struct MainView: View {
     MainView()
         .environmentObject(AuthManager())
 }
+
 

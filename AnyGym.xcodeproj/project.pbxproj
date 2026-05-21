@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -24,6 +24,14 @@
 		7C6D8B04DE28EB2639B74658 /* pre-rebase.sample in Resources */ = {isa = PBXBuildFile; fileRef = 04A4960021F31E95E6580516 /* pre-rebase.sample */; };
 		83A9D915938109491823F6EE /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31C1B5D1DDD3CA6B5F7099 /* OnboardingView.swift */; };
 		8DCFBDA27BEA2367C273A9F9 /* pre-applypatch.sample in Resources */ = {isa = PBXBuildFile; fileRef = 695D6C8EDFDB0EDB91148C29 /* pre-applypatch.sample */; };
+		8FBF8D182EEA1E77003F1B75 /* gymPinIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 8FBF8D152EEA1E76003F1B75 /* gymPinIcon.png */; };
+		8FBF8D192EEA1E77003F1B75 /* gymPinIcon@2.png in Resources */ = {isa = PBXBuildFile; fileRef = 8FBF8D162EEA1E76003F1B75 /* gymPinIcon@2.png */; };
+		8FBF8D1A2EEA1E77003F1B75 /* gymPinIcon@3.png in Resources */ = {isa = PBXBuildFile; fileRef = 8FBF8D172EEA1E76003F1B75 /* gymPinIcon@3.png */; };
+		8FDBC7B02EEB7B3C0018E816 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8FDBC7AF2EEB7B3C0018E816 /* WidgetKit.framework */; };
+		8FDBC7B22EEB7B3C0018E816 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8FDBC7B12EEB7B3C0018E816 /* SwiftUI.framework */; };
+		8FDBC7C32EEB7B3F0018E816 /* liveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8FDBC7AD2EEB7B3C0018E816 /* liveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		8FDBC7D52EEB81220018E816 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDBC7D32EEB81220018E816 /* LiveActivityManager.swift */; };
+		8FDBC7D62EEB81220018E816 /* PassActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDBC7D42EEB81220018E816 /* PassActivityAttributes.swift */; };
 		90FD4039A529CF5821AC9B30 /* Poppins-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 3A42EF2D899F8A1E5A7AF33D /* Poppins-Medium.ttf */; };
 		A18DE53C90174E375D30F0A7 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 464DD4C93502928A9A777CEA /* ContentView.swift */; };
 		A2743B6836AF764115DBB584 /* applypatch-msg.sample in Resources */ = {isa = PBXBuildFile; fileRef = 6619F586BD4DAFE3DB5AA8C9 /* applypatch-msg.sample */; };
@@ -36,6 +44,30 @@
 		E8E79EE09538C75E0D9E32C0 /* Poppins-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5B5F266E1BE55CE997094D10 /* Poppins-Regular.ttf */; };
 		EBE73345471961F156CD44E5 /* pre-commit.sample in Resources */ = {isa = PBXBuildFile; fileRef = F23EC3ED1A8A28138E3E4BFD /* pre-commit.sample */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		8FDBC7C12EEB7B3F0018E816 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 321F481A581934A88A245DAF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8FDBC7AC2EEB7B3C0018E816;
+			remoteInfo = liveActivityExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		8FDBC7C42EEB7B3F0018E816 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				8FDBC7C32EEB7B3F0018E816 /* liveActivityExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0210FFECAF720209691ECAA1 /* f73fe2eb920da81ae4e16fa406c7235ad4e5fc */ = {isa = PBXFileReference; lastKnownFileType = file; path = f73fe2eb920da81ae4e16fa406c7235ad4e5fc; sourceTree = "<group>"; };
@@ -102,6 +134,14 @@
 		84402BA011ADC62934236092 /* 90eb688350a00ed69fd7bf981aea328b5ccdba */ = {isa = PBXFileReference; lastKnownFileType = file; path = 90eb688350a00ed69fd7bf981aea328b5ccdba; sourceTree = "<group>"; };
 		854021BDD9990D02FD0F24FC /* 9de29bb2d1d6434b8b29ae775ad8c2e48c5391 */ = {isa = PBXFileReference; lastKnownFileType = file; path = 9de29bb2d1d6434b8b29ae775ad8c2e48c5391; sourceTree = "<group>"; };
 		8C65CDA368D230EA864F8674 /* bcb71523cd345b283db1c43da438f66d68dc5a */ = {isa = PBXFileReference; lastKnownFileType = file; path = bcb71523cd345b283db1c43da438f66d68dc5a; sourceTree = "<group>"; };
+		8FBF8D152EEA1E76003F1B75 /* gymPinIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = gymPinIcon.png; sourceTree = "<group>"; };
+		8FBF8D162EEA1E76003F1B75 /* gymPinIcon@2.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "gymPinIcon@2.png"; sourceTree = "<group>"; };
+		8FBF8D172EEA1E76003F1B75 /* gymPinIcon@3.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "gymPinIcon@3.png"; sourceTree = "<group>"; };
+		8FDBC7AD2EEB7B3C0018E816 /* liveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = liveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		8FDBC7AF2EEB7B3C0018E816 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		8FDBC7B12EEB7B3C0018E816 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		8FDBC7D32EEB81220018E816 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
+		8FDBC7D42EEB81220018E816 /* PassActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassActivityAttributes.swift; sourceTree = "<group>"; };
 		970BF991A64F6E6AFB9675A0 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		986057DF5E93614195BBC7C1 /* 91664d433e0d2ac1f2d2ffb46f04ad0c18c7df */ = {isa = PBXFileReference; lastKnownFileType = file; path = 91664d433e0d2ac1f2d2ffb46f04ad0c18c7df; sourceTree = "<group>"; };
 		9956F589C5EC5EE36341459B /* 559eeb290fb8036f10633ff0640447d827b27c */ = {isa = PBXFileReference; lastKnownFileType = text; path = 559eeb290fb8036f10633ff0640447d827b27c; sourceTree = "<group>"; };
@@ -151,12 +191,35 @@
 		FBBDF787AA13B6E1A046EA83 /* pre-receive.sample */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "pre-receive.sample"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		8FDBC7C72EEB7B3F0018E816 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 8FDBC7AC2EEB7B3C0018E816 /* liveActivityExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		8FDBC7B32EEB7B3C0018E816 /* liveActivity */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (8FDBC7C72EEB7B3F0018E816 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = liveActivity; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		44203325EFA4DB9F99F7CB81 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				6675A2BA60CA0071A3222C13 /* Auth0 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8FDBC7AA2EEB7B3C0018E816 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8FDBC7B22EEB7B3C0018E816 /* SwiftUI.framework in Frameworks */,
+				8FDBC7B02EEB7B3C0018E816 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -379,6 +442,9 @@
 			children = (
 				6E5D3AD0CBFF7786A01106E8 /* AnyGym.xcodeproj */,
 				1278219C124B7059BDB27DCE /* AnyGymApp.swift */,
+				8FBF8D152EEA1E76003F1B75 /* gymPinIcon.png */,
+				8FBF8D162EEA1E76003F1B75 /* gymPinIcon@2.png */,
+				8FBF8D172EEA1E76003F1B75 /* gymPinIcon@3.png */,
 				9CC46107C69B26422B29D3A2 /* Assets.xcassets */,
 				F01E1390F5CA20627B61D157 /* AuthManager.swift */,
 				464DD4C93502928A9A777CEA /* ContentView.swift */,
@@ -391,6 +457,8 @@
 				5B5F266E1BE55CE997094D10 /* Poppins-Regular.ttf */,
 				64323D4C1DEA544581B8D5A6 /* Poppins-SemiBold.ttf */,
 				2D571C6DB375D2CFD83ED008 /* PoppinsFont.swift */,
+				8FDBC7D32EEB81220018E816 /* LiveActivityManager.swift */,
+				8FDBC7D42EEB81220018E816 /* PassActivityAttributes.swift */,
 			);
 			name = anygymIOS;
 			path = .;
@@ -624,6 +692,15 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		8FDBC7AE2EEB7B3C0018E816 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				8FDBC7AF2EEB7B3C0018E816 /* WidgetKit.framework */,
+				8FDBC7B12EEB7B3C0018E816 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		8FF3A2263EFB956CAF30842A /* 11 */ = {
 			isa = PBXGroup;
 			children = (
@@ -768,6 +845,7 @@
 			isa = PBXGroup;
 			children = (
 				A40504B5E458062F7A61F0BC /* AnyGym.app */,
+				8FDBC7AD2EEB7B3C0018E816 /* liveActivityExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -785,6 +863,8 @@
 			children = (
 				2158067A21445A2F5F3DF626 /* .git */,
 				56CBF669DA04AC5FC97BB4AF /* anygymIOS */,
+				8FDBC7B32EEB7B3C0018E816 /* liveActivity */,
+				8FDBC7AE2EEB7B3C0018E816 /* Frameworks */,
 				C66B527218798258CD0FAF4F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -881,6 +961,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		8FDBC7AC2EEB7B3C0018E816 /* liveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8FDBC7C82EEB7B3F0018E816 /* Build configuration list for PBXNativeTarget "liveActivityExtension" */;
+			buildPhases = (
+				8FDBC7A92EEB7B3C0018E816 /* Sources */,
+				8FDBC7AA2EEB7B3C0018E816 /* Frameworks */,
+				8FDBC7AB2EEB7B3C0018E816 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				8FDBC7B32EEB7B3C0018E816 /* liveActivity */,
+			);
+			name = liveActivityExtension;
+			packageProductDependencies = (
+			);
+			productName = liveActivityExtension;
+			productReference = 8FDBC7AD2EEB7B3C0018E816 /* liveActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		C2B4171F41D2D3C9A1084493 /* AnyGym */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FEF48A1B4929F17F9AE057EF /* Build configuration list for PBXNativeTarget "AnyGym" */;
@@ -888,10 +990,12 @@
 				14FBC28B26ADE26DF082AC58 /* Sources */,
 				D460FCC9531F164500B405D6 /* Resources */,
 				44203325EFA4DB9F99F7CB81 /* Frameworks */,
+				8FDBC7C42EEB7B3F0018E816 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				8FDBC7C22EEB7B3F0018E816 /* PBXTargetDependency */,
 			);
 			name = AnyGym;
 			packageProductDependencies = (
@@ -908,7 +1012,13 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 1400;
+				TargetAttributes = {
+					8FDBC7AC2EEB7B3C0018E816 = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+				};
 			};
 			buildConfigurationList = 59724FCF56560ECC8CD1BACD /* Build configuration list for PBXProject "AnyGym" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -933,11 +1043,19 @@
 			projectRoot = "";
 			targets = (
 				C2B4171F41D2D3C9A1084493 /* AnyGym */,
+				8FDBC7AC2EEB7B3C0018E816 /* liveActivityExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		8FDBC7AB2EEB7B3C0018E816 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D460FCC9531F164500B405D6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -957,6 +1075,9 @@
 				36D805E300C5108807E092DE /* pre-merge-commit.sample in Resources */,
 				CC2D657A56636F9704E909A5 /* pre-push.sample in Resources */,
 				7C6D8B04DE28EB2639B74658 /* pre-rebase.sample in Resources */,
+				8FBF8D182EEA1E77003F1B75 /* gymPinIcon.png in Resources */,
+				8FBF8D192EEA1E77003F1B75 /* gymPinIcon@2.png in Resources */,
+				8FBF8D1A2EEA1E77003F1B75 /* gymPinIcon@3.png in Resources */,
 				03276CFE45531B6870041597 /* pre-receive.sample in Resources */,
 				1162DC84B3C678C897EFD725 /* prepare-commit-msg.sample in Resources */,
 				6694B28AF124F384C43B1BC1 /* push-to-checkout.sample in Resources */,
@@ -978,11 +1099,28 @@
 				CEBAB5230C19AD5CBD77291A /* LoginView.swift in Sources */,
 				D41EE7F06BA88A9E03DA9667 /* MainView.swift in Sources */,
 				83A9D915938109491823F6EE /* OnboardingView.swift in Sources */,
+				8FDBC7D52EEB81220018E816 /* LiveActivityManager.swift in Sources */,
+				8FDBC7D62EEB81220018E816 /* PassActivityAttributes.swift in Sources */,
 				C50C441142D2AAD55EF189E3 /* PoppinsFont.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8FDBC7A92EEB7B3C0018E816 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8FDBC7C22EEB7B3F0018E816 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8FDBC7AC2EEB7B3C0018E816 /* liveActivityExtension */;
+			targetProxy = 8FDBC7C12EEB7B3F0018E816 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		1E862A643AB0C6F7A4706D2F /* Release */ = {
@@ -1072,7 +1210,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1080,6 +1218,86 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		8FDBC7C52EEB7B3F0018E816 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8H7G567A2N;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = liveActivity/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = liveActivity;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anygym.app.liveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		8FDBC7C62EEB7B3F0018E816 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8H7G567A2N;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = liveActivity/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = liveActivity;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anygym.app.liveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -1134,7 +1352,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1154,6 +1372,15 @@
 			buildConfigurations = (
 				B8346B95FF813C6BA6A4A774 /* Debug */,
 				6F0232225DCAFD358C1EC539 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8FDBC7C82EEB7B3F0018E816 /* Build configuration list for PBXNativeTarget "liveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8FDBC7C52EEB7B3F0018E816 /* Debug */,
+				8FDBC7C62EEB7B3F0018E816 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

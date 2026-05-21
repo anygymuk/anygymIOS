@@ -23,6 +23,8 @@ struct User: Codable {
     let emergencyContactName: String?
     let emergencyContactNumber: String?
     let stripeCustomerId: String?
+    let passNotificationConsent: Bool?
+    let marketingConsent: Bool?
     
     enum CodingKeys: String, CodingKey {
         case auth0Id = "auth0_id"
@@ -37,6 +39,8 @@ struct User: Codable {
         case emergencyContactName = "emergency_contact_name"
         case emergencyContactNumber = "emergency_contact_number"
         case stripeCustomerId = "stripe_customer_id"
+        case passNotificationConsent = "pass_notification_consent"
+        case marketingConsent = "marketing_consent"
     }
     
     // Computed property for display name (first name from full name)
@@ -355,5 +359,175 @@ class AuthManager: ObservableObject {
         let signupURLString = "https://\(domain)/authorize?client_id=\(clientId)&redirect_uri=\(encodedRedirectURI)&response_type=code&scope=openid%20profile%20email&screen_hint=signup"
         
         return URL(string: signupURLString)
+    }
+    
+    // Update user profile
+    func updateUserProfile(
+        auth0Id: String,
+        fullName: String?,
+        addressLine1: String?,
+        addressLine2: String?,
+        addressCity: String?,
+        addressPostcode: String?,
+        dateOfBirth: String?,
+        emergencyContactName: String?,
+        emergencyContactNumber: String?,
+        passNotificationConsent: Bool?,
+        marketingConsent: Bool?,
+        completion: @escaping (Result<User, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/user/update") else {
+            completion(.failure(NSError(domain: "AuthManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(auth0Id, forHTTPHeaderField: "auth0_id")
+        
+        // Build request body with snake_case field names
+        var body: [String: Any] = [:]
+        
+        if let fullName = fullName {
+            body["full_name"] = fullName
+        }
+        if let addressLine1 = addressLine1 {
+            body["address_line1"] = addressLine1
+        }
+        if let addressLine2 = addressLine2 {
+            body["address_line2"] = addressLine2
+        }
+        if let addressCity = addressCity {
+            body["address_city"] = addressCity
+        }
+        if let addressPostcode = addressPostcode {
+            body["address_postcode"] = addressPostcode
+        }
+        if let dateOfBirth = dateOfBirth {
+            body["date_of_birth"] = dateOfBirth
+        }
+        if let emergencyContactName = emergencyContactName {
+            body["emergency_contact_name"] = emergencyContactName
+        }
+        if let emergencyContactNumber = emergencyContactNumber {
+            body["emergency_contact_number"] = emergencyContactNumber
+        }
+        if let passNotificationConsent = passNotificationConsent {
+            body["pass_notification_consent"] = passNotificationConsent
+        }
+        if let marketingConsent = marketingConsent {
+            body["marketing_consent"] = marketingConsent
+        }
+        
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
+            completion(.failure(NSError(domain: "AuthManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to encode request data"])))
+            return
+        }
+        
+        request.httpBody = bodyData
+        
+        // Log request for debugging
+        if let bodyString = String(data: bodyData, encoding: .utf8) {
+            print("═══════════════════════════════════════════════")
+            print("UPDATE PROFILE REQUEST:")
+            print("URL: \(url.absoluteString)")
+            print("Method: PUT")
+            print("Body: \(bodyString)")
+            print("═══════════════════════════════════════════════")
+        }
+        
+        URLSession.shared.dataTaskPublisher(for: request)
+            .tryMap { output -> Data in
+                guard let httpResponse = output.response as? HTTPURLResponse else {
+                    throw NSError(domain: "AuthManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+                }
+                
+                print("Response status code: \(httpResponse.statusCode)")
+                
+                // Check for error status codes
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    // Try to parse error message from response
+                    if let errorData = try? JSONSerialization.jsonObject(with: output.data) as? [String: Any],
+                       let message = errorData["message"] as? String {
+                        throw NSError(domain: "AuthManager", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+                    } else if let errorString = String(data: output.data, encoding: .utf8) {
+                        throw NSError(domain: "AuthManager", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error: \(errorString)"])
+                    } else {
+                        throw NSError(domain: "AuthManager", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error with status code: \(httpResponse.statusCode)"])
+                    }
+                }
+                
+                return output.data
+            }
+            .tryMap { data -> User in
+                // Log response for debugging
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("Response body: \(responseString)")
+                }
+                
+                // Check if response is empty - some APIs return empty body on success
+                if data.isEmpty {
+                    print("Empty response - will fetch updated user data")
+                    // Return current user profile if available, otherwise we'll fetch it
+                    if let currentUser = self.userProfile {
+                        return currentUser
+                    }
+                    // If no current user, we need to fetch it
+                    throw NSError(domain: "AuthManager", code: 0, userInfo: [NSLocalizedDescriptionKey: "EmptyResponse"])
+                }
+                
+                let decoder = JSONDecoder()
+                do {
+                    return try decoder.decode(User.self, from: data)
+                } catch {
+                    print("Failed to decode User: \(error)")
+                    // Check if this is a success message response (e.g., {"message": "User updated successfully"})
+                    if let responseDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let message = responseDict["message"] as? String {
+                        // If we have a success message, treat it as success and fetch updated data
+                        print("Received success message: \(message)")
+                        // Return current user profile if available, otherwise signal to fetch it
+                        if let currentUser = self.userProfile {
+                            return currentUser
+                        }
+                        // Signal to fetch updated user data
+                        throw NSError(domain: "AuthManager", code: 0, userInfo: [NSLocalizedDescriptionKey: "SuccessMessage"])
+                    }
+                    // If it's not a message response, treat as actual error
+                    throw error
+                }
+            }
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { result in
+                    if case .failure(let error) = result {
+                        let nsError = error as NSError
+                        // Check if this is the empty response or success message case (which means success)
+                        if nsError.code == 0 && nsError.domain == "AuthManager" {
+                            // Empty response or success message means success - fetch updated user data
+                            print("Update successful, fetching updated user data...")
+                            self.fetchUserData(auth0Id: auth0Id)
+                            // Wait a moment for fetch to complete, then return success
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                if let user = self.userProfile {
+                                    completion(.success(user))
+                                } else {
+                                    completion(.failure(NSError(domain: "AuthManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Profile updated but failed to fetch updated data"])))
+                                }
+                            }
+                        } else {
+                            print("Update profile error: \(error.localizedDescription)")
+                            completion(.failure(error))
+                        }
+                    }
+                },
+                receiveValue: { user in
+                    print("Profile updated successfully")
+                    self.userProfile = user
+                    completion(.success(user))
+                }
+            )
+            .store(in: &cancellables)
     }
 }
