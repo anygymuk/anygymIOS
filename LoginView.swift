@@ -27,7 +27,6 @@ struct LoginSafariView: UIViewControllerRepresentable {
 
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
-    @State private var hasTriggeredLogin = false
     @State private var showSignupView = false
     @State private var signupURL: URL?
     
@@ -124,24 +123,12 @@ struct LoginView: View {
                     .ignoresSafeArea()
             }
         }
-        .task {
-            // Wait a moment for the window scene to be active, then trigger login
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            if !hasTriggeredLogin && !authManager.isLoading && !authManager.isAuthenticated {
-                hasTriggeredLogin = true
-                await MainActor.run {
-                    authManager.login()
-                }
-            }
-        }
         .onChange(of: authManager.errorMessage) { errorMessage in
-            // If user cancelled or window scene error, clear the error and allow retry
             if let error = errorMessage {
                 let lowercased = error.lowercased()
                 if lowercased.contains("cancelled") || lowercased.contains("windowscene") || lowercased.contains("not in the foreground") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         authManager.errorMessage = nil
-                        hasTriggeredLogin = false
                     }
                 }
             }

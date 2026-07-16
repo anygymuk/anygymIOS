@@ -1860,11 +1860,11 @@ struct FindGymsView: View {
             // Initialize displayGyms
             updateDisplayGyms()
             // Fetch active pass
-            if let user = authManager.user {
-                passService.fetchActivePass(auth0Id: user.sub)
+            if let auth0Id = authManager.auth0Id {
+                passService.fetchActivePass(auth0Id: auth0Id)
             }
         }
-        .onChange(of: authManager.user?.sub) { auth0Id in
+        .onChange(of: authManager.auth0Id) { auth0Id in
             // Fetch active pass when user changes
             if let auth0Id = auth0Id {
                 passService.fetchActivePass(auth0Id: auth0Id)
@@ -1890,8 +1890,8 @@ struct FindGymsView: View {
                 activePassDragOffset = 0
             } else {
                 // If no active pass, fetch it
-                if let user = authManager.user {
-                    passService.fetchActivePass(auth0Id: user.sub)
+                if let auth0Id = authManager.auth0Id {
+                    passService.fetchActivePass(auth0Id: auth0Id)
                 }
             }
         }
@@ -1899,8 +1899,8 @@ struct FindGymsView: View {
             // When app comes to foreground (e.g., from Live Activity tap), ensure active pass panel is shown
             print("📱 MainView: App entering foreground")
             // Always refresh active pass when coming to foreground
-            if let user = authManager.user {
-                passService.fetchActivePass(auth0Id: user.sub)
+            if let auth0Id = authManager.auth0Id {
+                passService.fetchActivePass(auth0Id: auth0Id)
             }
             // Show panel if there's an active pass
             if passService.activePass != nil {
@@ -2356,8 +2356,8 @@ struct GymDetailView: View {
         }
         .onAppear {
             // Fetch subscription status
-            if let user = authManager.user {
-                passService.fetchPasses(auth0Id: user.sub)
+            if let auth0Id = authManager.auth0Id {
+                passService.fetchPasses(auth0Id: auth0Id)
             }
         }
     }
@@ -2442,19 +2442,19 @@ struct GymDetailView: View {
         isGeneratingPass = true
         errorMessage = nil
         
-        guard let user = authManager.user else {
+        guard let auth0Id = authManager.auth0Id else {
             print("❌ No user found - cannot generate pass")
             errorMessage = "Please log in to generate a pass"
             isGeneratingPass = false
             return
         }
         
-        print("✅ User found: \(user.sub)")
+        print("✅ User found: \(auth0Id)")
         
         Task {
             do {
                 print("📡 Calling passService.generatePass...")
-                _ = try await passService.generatePass(gymId: gymDetail.id, auth0Id: user.sub)
+                _ = try await passService.generatePass(gymId: gymDetail.id, auth0Id: auth0Id)
                 print("✅ Pass generation API call completed successfully")
                 
                 await MainActor.run {
@@ -2464,8 +2464,8 @@ struct GymDetailView: View {
                     onNavigateToPasses?()
                     // Refresh passes and active pass (will update storage)
                     print("🔄 Refreshing passes list...")
-                    passService.fetchPasses(auth0Id: user.sub)
-                    passService.fetchActivePass(auth0Id: user.sub)
+                    passService.fetchPasses(auth0Id: auth0Id)
+                    passService.fetchActivePass(auth0Id: auth0Id)
                 }
                 
                 // Wait a moment for the API to process the pass, then fetch active pass to trigger Live Activity
@@ -2473,8 +2473,8 @@ struct GymDetailView: View {
                 try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
                 await MainActor.run {
                     print("🔄 Fetching active pass to start Live Activity...")
-                    print("   User ID: \(user.sub)")
-                    passService.fetchActivePass(auth0Id: user.sub)
+                    print("   User ID: \(auth0Id)")
+                    passService.fetchActivePass(auth0Id: auth0Id)
                 }
             } catch {
                 print("❌ Error in generatePassDirectly: \(error)")
@@ -2906,6 +2906,7 @@ struct PassResponse: Codable {
 }
 
 // MARK: - Pass Service
+@MainActor
 class PassService: ObservableObject {
     @Published var passes: [Pass] = []
     @Published var passHistory: [Pass] = []
@@ -2923,6 +2924,31 @@ class PassService: ObservableObject {
     private let baseURL = "https://api.any-gym.com"
     private var cancellables = Set<AnyCancellable>()
     private let storageService = PassStorageService()
+    
+    func loadCachedPasses() {
+        storageService.checkAndCleanupExpiredActivePass()
+        
+        if let cachedPass = storageService.loadActivePass() {
+            activePass = cachedPass
+            syncActivePassIntoPasses(cachedPass)
+            print("📱 Loaded cached active pass for display")
+        }
+        
+        if passHistory.isEmpty {
+            let cachedHistory = storageService.loadPassHistory()
+            if !cachedHistory.isEmpty {
+                passHistory = cachedHistory
+                print("📱 Loaded \(cachedHistory.count) cached passes into history")
+            }
+        }
+    }
+    
+    private func syncActivePassIntoPasses(_ pass: Pass) {
+        if passes.contains(where: { $0.id == pass.id }) {
+            return
+        }
+        passes = [pass] + passes.filter { $0.id != pass.id }
+    }
     
     func checkNetworkConnectivity() async -> Bool {
         guard let url = URL(string: "\(baseURL)/health") else {
@@ -3025,6 +3051,11 @@ class PassService: ObservableObject {
                             if !cachedHistory.isEmpty {
                                 self.passHistory = cachedHistory
                                 print("📱 Loaded \(cachedHistory.count) passes from local storage (offline mode)")
+                            }
+                            if let cachedPass = self.storageService.loadActivePass() {
+                                self.activePass = cachedPass
+                                self.syncActivePassIntoPasses(cachedPass)
+                                print("📱 Loaded cached active pass from local storage (offline mode)")
                             }
                         }
                     }
@@ -3233,16 +3264,14 @@ class PassService: ObservableObject {
         
         Task { @MainActor in
             storageService.checkAndCleanupExpiredActivePass()
+            if let cachedPass = storageService.loadActivePass() {
+                self.activePass = cachedPass
+                self.syncActivePassIntoPasses(cachedPass)
+            }
         }
         
         guard let url = URL(string: "\(baseURL)/user/active_pass") else {
             print("❌ Invalid URL for active pass")
-            Task { @MainActor in
-                if let cachedPass = storageService.loadActivePass() {
-                    self.activePass = cachedPass
-                    print("📱 Loaded active pass from local storage (offline mode)")
-                }
-            }
             return
         }
         
@@ -3304,6 +3333,7 @@ class PassService: ObservableObject {
                                 self.isOffline = true
                                 if let cachedPass = self.storageService.loadActivePass() {
                                     self.activePass = cachedPass
+                                    self.syncActivePassIntoPasses(cachedPass)
                                     print("📱 Loaded active pass from local storage (offline mode)")
                                 }
                             }
@@ -3323,6 +3353,7 @@ class PassService: ObservableObject {
                             print("   Valid Until: \(pass.validUntil ?? "N/A")")
                             print("   Status: \(pass.status ?? "unknown")")
                             
+                            self.syncActivePassIntoPasses(pass)
                             await self.storageService.saveActivePass(pass, downloadQR: true)
                             
                             // Start Live Activity if available
@@ -4028,6 +4059,16 @@ struct MyPassesView: View {
         max(0, guestPassesTotal - guestPassesUsed)
     }
     
+    var displayedActivePasses: [Pass] {
+        if !passService.passes.isEmpty {
+            return passService.passes
+        }
+        if let activePass = passService.activePass {
+            return [activePass]
+        }
+        return []
+    }
+    
     var resetDate: String {
         // Use subscription's current_period_end if available
         if let subscription = passService.subscription {
@@ -4241,7 +4282,7 @@ struct MyPassesView: View {
                 .padding(.bottom, 24)
                 
                 // Active Passes Section
-                if !passService.passes.isEmpty {
+                if !displayedActivePasses.isEmpty {
                     VStack(alignment: .leading, spacing: 16) {
                         // Section Header
                         HStack(spacing: 8) {
@@ -4255,7 +4296,7 @@ struct MyPassesView: View {
                         .padding(.horizontal, 20)
                         
                         // Active Pass Cards
-                        ForEach(passService.passes) { pass in
+                        ForEach(displayedActivePasses) { pass in
                             ActivePassCard(pass: pass)
                                 .padding(.horizontal, 20)
                         }
@@ -4285,7 +4326,7 @@ struct MyPassesView: View {
                                             gym: gym,
                                             cardWidth: cardWidth,
                                             passService: passService,
-                                            auth0Id: authManager.user?.sub
+                                            auth0Id: authManager.auth0Id
                                         )
                                     }
                                 }
@@ -4329,15 +4370,17 @@ struct MyPassesView: View {
             }
         }
         .onAppear {
-            // Fetch passes when view appears
-            if let user = authManager.user {
-                passService.fetchPasses(auth0Id: user.sub)
+            passService.loadCachedPasses()
+            if let auth0Id = authManager.auth0Id {
+                passService.fetchPasses(auth0Id: auth0Id)
+                passService.fetchActivePass(auth0Id: auth0Id)
             }
         }
-        .onChange(of: authManager.user?.sub) { auth0Id in
+        .onChange(of: authManager.auth0Id) { auth0Id in
             // Fetch passes when user's auth0_id changes
             if let auth0Id = auth0Id {
                 passService.fetchPasses(auth0Id: auth0Id)
+                passService.fetchActivePass(auth0Id: auth0Id)
             }
         }
     }
@@ -5512,7 +5555,7 @@ struct ProfileView: View {
                     currentTier: passService.subscription?.tier.lowercased(),
                     onSubscriptionChanged: {
                         // Refresh subscription data after change
-                        if let auth0Id = authManager.user?.sub {
+                        if let auth0Id = authManager.auth0Id {
                             passService.fetchPasses(auth0Id: auth0Id)
                         }
                     }
@@ -5521,11 +5564,11 @@ struct ProfileView: View {
             }
             .onAppear {
                 // Fetch user profile if not loaded
-                if authManager.userProfile == nil, let auth0Id = authManager.user?.sub {
+                if authManager.userProfile == nil, let auth0Id = authManager.auth0Id {
                     authManager.fetchUserData(auth0Id: auth0Id)
                 }
                 // Fetch passes for statistics
-                if let auth0Id = authManager.user?.sub {
+                if let auth0Id = authManager.auth0Id {
                     passService.fetchPasses(auth0Id: auth0Id)
                 }
             }
@@ -5994,7 +6037,7 @@ struct ProfileView: View {
     }
     
     private func cancelSubscription() {
-        guard let auth0Id = authManager.user?.sub else {
+        guard let auth0Id = authManager.auth0Id else {
             cancelErrorMessage = "User not authenticated"
             showCancelError = true
             return
@@ -6523,7 +6566,7 @@ struct EditProfileView: View {
     }
     
     private func saveProfile() {
-        guard let auth0Id = authManager.user?.sub else {
+        guard let auth0Id = authManager.auth0Id else {
             errorMessage = "User not authenticated"
             showError = true
             return
@@ -6978,7 +7021,7 @@ struct ChangeSubscriptionView: View {
                 return
             }
             
-            let userEmail = self.authManager.user?.email
+            let userEmail = self.authManager.userEmail
             
             // Find product to get tier
             let product = self.stripeProducts.first { $0.price?.id == priceId }

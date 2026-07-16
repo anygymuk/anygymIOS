@@ -275,7 +275,7 @@ struct OnboardingView: View {
                         // When checkout sheet is dismissed, complete onboarding if it hasn't been completed yet
                         if !authManager.onboardingCompleted {
                             authManager.onboardingCompleted = true
-                            if let auth0Id = authManager.user?.sub {
+                            if let auth0Id = authManager.auth0Id {
                                 authManager.fetchUserData(auth0Id: auth0Id)
                             }
                         }
@@ -298,7 +298,7 @@ struct OnboardingView: View {
             // Complete onboarding
             if !authManager.onboardingCompleted {
                 authManager.onboardingCompleted = true
-                if let auth0Id = authManager.user?.sub {
+                if let auth0Id = authManager.auth0Id {
                     authManager.fetchUserData(auth0Id: auth0Id)
                 }
             }
@@ -794,7 +794,7 @@ struct OnboardingView: View {
             }
             
             // Get user email from Auth0 user info if available
-            let userEmail = authManager.user?.email
+            let userEmail = authManager.userEmail
             
             // Find the product that matches this price ID to get tier information
             var membershipTier: String? = nil

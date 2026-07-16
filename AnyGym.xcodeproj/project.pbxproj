@@ -32,6 +32,7 @@
 		8FDBC7C32EEB7B3F0018E816 /* liveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8FDBC7AD2EEB7B3C0018E816 /* liveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8FDBC7D52EEB81220018E816 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDBC7D32EEB81220018E816 /* LiveActivityManager.swift */; };
 		8FDBC7D62EEB81220018E816 /* PassActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDBC7D42EEB81220018E816 /* PassActivityAttributes.swift */; };
+		8FDBC7E22EEB82000018E816 /* PassStorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDBC7E12EEB82000018E816 /* PassStorageService.swift */; };
 		90FD4039A529CF5821AC9B30 /* Poppins-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 3A42EF2D899F8A1E5A7AF33D /* Poppins-Medium.ttf */; };
 		A18DE53C90174E375D30F0A7 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 464DD4C93502928A9A777CEA /* ContentView.swift */; };
 		A2743B6836AF764115DBB584 /* applypatch-msg.sample in Resources */ = {isa = PBXBuildFile; fileRef = 6619F586BD4DAFE3DB5AA8C9 /* applypatch-msg.sample */; };
@@ -142,6 +143,7 @@
 		8FDBC7B12EEB7B3C0018E816 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		8FDBC7D32EEB81220018E816 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
 		8FDBC7D42EEB81220018E816 /* PassActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassActivityAttributes.swift; sourceTree = "<group>"; };
+		8FDBC7E12EEB82000018E816 /* PassStorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassStorageService.swift; sourceTree = "<group>"; };
 		970BF991A64F6E6AFB9675A0 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		986057DF5E93614195BBC7C1 /* 91664d433e0d2ac1f2d2ffb46f04ad0c18c7df */ = {isa = PBXFileReference; lastKnownFileType = file; path = 91664d433e0d2ac1f2d2ffb46f04ad0c18c7df; sourceTree = "<group>"; };
 		9956F589C5EC5EE36341459B /* 559eeb290fb8036f10633ff0640447d827b27c */ = {isa = PBXFileReference; lastKnownFileType = text; path = 559eeb290fb8036f10633ff0640447d827b27c; sourceTree = "<group>"; };
@@ -459,6 +461,7 @@
 				2D571C6DB375D2CFD83ED008 /* PoppinsFont.swift */,
 				8FDBC7D32EEB81220018E816 /* LiveActivityManager.swift */,
 				8FDBC7D42EEB81220018E816 /* PassActivityAttributes.swift */,
+				8FDBC7E12EEB82000018E816 /* PassStorageService.swift */,
 			);
 			name = anygymIOS;
 			path = .;
@@ -1101,6 +1104,7 @@
 				83A9D915938109491823F6EE /* OnboardingView.swift in Sources */,
 				8FDBC7D52EEB81220018E816 /* LiveActivityManager.swift in Sources */,
 				8FDBC7D62EEB81220018E816 /* PassActivityAttributes.swift in Sources */,
+				8FDBC7E22EEB82000018E816 /* PassStorageService.swift in Sources */,
 				C50C441142D2AAD55EF189E3 /* PoppinsFont.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

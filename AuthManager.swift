@@ -81,6 +81,16 @@ class AuthManager: ObservableObject {
     @Published var errorMessage: String?
     @Published var onboardingCompleted: Bool = false
     @Published var isLoadingUserData: Bool = false
+    @Published var isCheckingAuth = true
+    
+    /// Auth0 user id from live session or persisted offline session.
+    var auth0Id: String? {
+        user?.sub ?? cachedAuth0Id
+    }
+    
+    var userEmail: String? {
+        user?.email ?? userProfile?.email
+    }
     
     private var credentialsManager: CredentialsManager
     private var authentication: Authentication
@@ -89,7 +99,14 @@ class AuthManager: ObservableObject {
     private var clientId: String
     private let baseURL = "https://api.any-gym.com"
     private var cancellables = Set<AnyCancellable>()
-    private var hasCheckedAuth = false
+    private var cachedAuth0Id: String?
+    
+    private enum SessionStorageKey {
+        static let hasPersistedSession = "hasPersistedSession"
+        static let auth0Id = "cachedAuth0Id"
+        static let userProfile = "cachedUserProfile"
+        static let onboardingCompleted = "cachedOnboardingCompleted"
+    }
     
     init() {
         // Get Auth0 credentials from Info.plist
@@ -117,46 +134,102 @@ class AuthManager: ObservableObject {
             checkAuthStatus()
         } else {
             print("Skipping auth status check - Auth0 not configured")
+            isCheckingAuth = false
         }
     }
     
     func checkAuthStatus() {
-        // Reset hasCheckedAuth to allow re-checking if needed
-        // hasCheckedAuth = false // Commented out - only check once per session
-        guard !hasCheckedAuth else { return }
-        hasCheckedAuth = true
+        guard !isLoading else { return }
+        isCheckingAuth = true
         isLoading = true
+        errorMessage = nil
         
         credentialsManager
-            .credentials()
+            .credentials(minTTL: 60)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
                     guard let self = self else { return }
-                    if case .failure = completion {
-                        self.isAuthenticated = false
-                        // Don't auto-trigger login here - let LoginView handle it after delay
-                        self.isLoading = false
+                    if case .failure(let error) = completion {
+                        print("Auth check: credentials unavailable (\(error.localizedDescription))")
+                        if self.restorePersistedSession() {
+                            print("Auth check: restored persisted session for offline access")
+                            self.isAuthenticated = true
+                            self.isLoadingUserData = false
+                        } else {
+                            self.isAuthenticated = false
+                        }
+                        self.finishAuthCheck()
                     }
                 },
                 receiveValue: { [weak self] credentials in
                     guard let self = self else { return }
-                    if !credentials.accessToken.isEmpty {
-                        self.isAuthenticated = true
-                        self.isLoading = false
-                        // Set isLoadingUserData to true BEFORE calling getUserInfo
-                        // This ensures ContentView shows loading while we fetch user data
-                        self.isLoadingUserData = true
-                        self.getUserInfo(accessToken: credentials.accessToken)
-                        // Note: fetchUserData will be called from getUserInfo after user.sub is available
-                    } else {
-                        self.isAuthenticated = false
-                        // Don't auto-trigger login here - let LoginView handle it after delay
-                        self.isLoading = false
+                    guard !credentials.accessToken.isEmpty else {
+                        if self.restorePersistedSession() {
+                            self.isAuthenticated = true
+                            self.isLoadingUserData = false
+                        } else {
+                            self.isAuthenticated = false
+                        }
+                        self.finishAuthCheck()
+                        return
                     }
+                    
+                    self.isAuthenticated = true
+                    self.isLoadingUserData = true
+                    self.getUserInfo(accessToken: credentials.accessToken)
                 }
             )
             .store(in: &cancellables)
+    }
+    
+    private func finishAuthCheck() {
+        isLoading = false
+        isCheckingAuth = false
+    }
+    
+    private func persistSession() {
+        guard let auth0Id = auth0Id else { return }
+        
+        UserDefaults.standard.set(true, forKey: SessionStorageKey.hasPersistedSession)
+        UserDefaults.standard.set(auth0Id, forKey: SessionStorageKey.auth0Id)
+        UserDefaults.standard.set(onboardingCompleted, forKey: SessionStorageKey.onboardingCompleted)
+        
+        if let userProfile = userProfile,
+           let profileData = try? JSONEncoder().encode(userProfile) {
+            UserDefaults.standard.set(profileData, forKey: SessionStorageKey.userProfile)
+        }
+        
+        print("Session persisted for auth0Id: \(auth0Id)")
+    }
+    
+    @discardableResult
+    private func restorePersistedSession() -> Bool {
+        guard UserDefaults.standard.bool(forKey: SessionStorageKey.hasPersistedSession),
+              let auth0Id = UserDefaults.standard.string(forKey: SessionStorageKey.auth0Id),
+              !auth0Id.isEmpty else {
+            return false
+        }
+        
+        cachedAuth0Id = auth0Id
+        onboardingCompleted = UserDefaults.standard.bool(forKey: SessionStorageKey.onboardingCompleted)
+        
+        if let profileData = UserDefaults.standard.data(forKey: SessionStorageKey.userProfile),
+           let cachedProfile = try? JSONDecoder().decode(User.self, from: profileData) {
+            userProfile = cachedProfile
+            onboardingCompleted = cachedProfile.onboardingCompleted
+        }
+        
+        print("Restored persisted session for auth0Id: \(auth0Id)")
+        return true
+    }
+    
+    private func clearPersistedSession() {
+        cachedAuth0Id = nil
+        UserDefaults.standard.removeObject(forKey: SessionStorageKey.hasPersistedSession)
+        UserDefaults.standard.removeObject(forKey: SessionStorageKey.auth0Id)
+        UserDefaults.standard.removeObject(forKey: SessionStorageKey.userProfile)
+        UserDefaults.standard.removeObject(forKey: SessionStorageKey.onboardingCompleted)
     }
     
     func login() {
@@ -164,16 +237,15 @@ class AuthManager: ObservableObject {
         errorMessage = nil
         
         // Clear any existing Auth0 session to force fresh login
-        webAuth.clearSession { _ in
+        webAuth.clearSession { [weak self] _ in
             // After clearing session, start login flow
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async {
                 guard let self = self else { return }
                 
                 self.webAuth
-                    .scope("openid profile email")
+                    .scope("openid profile email offline_access")
                     .parameters([
-                        "screen_hint": "login",  // Show login screen (not signup)
-                        "prompt": "login"        // Force login even if user is already authenticated
+                        "screen_hint": "login"
                     ])
                     .start { [weak self] (result: Result<Credentials, WebAuthError>) in
                         DispatchQueue.main.async {
@@ -181,7 +253,10 @@ class AuthManager: ObservableObject {
                             self.isLoading = false
                             switch result {
                             case .success(let credentials):
-                                _ = self.credentialsManager.store(credentials: credentials)
+                                let stored = self.credentialsManager.store(credentials: credentials)
+                                if !stored {
+                                    print("WARNING: Failed to store credentials in keychain")
+                                }
                                 self.isAuthenticated = true
                                 self.getUserInfo(accessToken: credentials.accessToken)
                             case .failure(let error):
@@ -212,6 +287,7 @@ class AuthManager: ObservableObject {
                     switch result {
                     case .success:
                         _ = self.credentialsManager.revoke()
+                        self.clearPersistedSession()
                         self.isAuthenticated = false
                         self.user = nil
                         self.userProfile = nil
@@ -234,12 +310,21 @@ class AuthManager: ObservableObject {
                     case .success(let user):
                         print("getUserInfo: Success, user.sub = \(user.sub)")
                         self.user = user
-                        // Fetch user data from API to check onboarding status
+                        self.cachedAuth0Id = user.sub
+                        self.persistSession()
                         print("getUserInfo: Calling fetchUserData with auth0Id: \(user.sub)")
                         self.fetchUserData(auth0Id: user.sub)
                     case .failure(let error):
                         print("getUserInfo: Error - \(error.localizedDescription)")
-                        self.errorMessage = error.localizedDescription
+                        if self.restorePersistedSession() {
+                            print("getUserInfo: Using persisted session after network failure")
+                            self.isLoadingUserData = false
+                            self.finishAuthCheck()
+                        } else {
+                            self.errorMessage = error.localizedDescription
+                            self.isLoadingUserData = false
+                            self.finishAuthCheck()
+                        }
                     }
                 }
             }
@@ -276,10 +361,12 @@ class AuthManager: ObservableObject {
                 receiveCompletion: { [weak self] completion in
                     guard let self = self else { return }
                     self.isLoadingUserData = false
+                    self.finishAuthCheck()
                     if case .failure(let error) = completion {
                         print("ERROR: Failed to fetch user data: \(error)")
-                        // Don't default to false - keep current state if fetch fails
-                        // This prevents overwriting a true value with false on network errors
+                        if self.restorePersistedSession() {
+                            print("Using persisted profile after user data fetch failure")
+                        }
                     }
                 },
                 receiveValue: { [weak self] user in
@@ -288,6 +375,8 @@ class AuthManager: ObservableObject {
                     self.userProfile = user
                     self.onboardingCompleted = user.onboardingCompleted
                     self.isLoadingUserData = false
+                    self.persistSession()
+                    self.finishAuthCheck()
                     print("User profile loaded: \(user.fullName ?? "Unknown")")
                     print("User onboarding status updated: \(previousStatus) -> \(user.onboardingCompleted)")
                     print("onboardingCompleted is now: \(self.onboardingCompleted)")
@@ -298,8 +387,7 @@ class AuthManager: ObservableObject {
     
     // Get auth0_id from user or refresh from credentials if needed
     func getAuth0Id(completion: @escaping (String?) -> Void) {
-        // If user is already loaded, return the sub
-        if let auth0Id = user?.sub {
+        if let auth0Id = auth0Id {
             completion(auth0Id)
             return
         }
