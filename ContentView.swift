@@ -45,6 +45,12 @@ struct ContentView: View {
                 print("ContentView: Refreshing user data on appear")
                 authManager.fetchUserData(auth0Id: authManager.user!.sub)
             }
+            
+            // Clean up expired active pass on app launch
+            Task { @MainActor in
+                let storageService = PassStorageService()
+                storageService.checkAndCleanupExpiredActivePass()
+            }
         }
         .onChange(of: authManager.onboardingCompleted) { newValue in
             print("ContentView: onboardingCompleted changed to \(newValue)")

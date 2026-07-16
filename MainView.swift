@@ -2462,9 +2462,10 @@ struct GymDetailView: View {
                     isPresented = false
                     // Navigate to passes page
                     onNavigateToPasses?()
-                    // Refresh passes
+                    // Refresh passes and active pass (will update storage)
                     print("🔄 Refreshing passes list...")
                     passService.fetchPasses(auth0Id: user.sub)
+                    passService.fetchActivePass(auth0Id: user.sub)
                 }
                 
                 // Wait a moment for the API to process the pass, then fetch active pass to trigger Live Activity
@@ -2917,9 +2918,30 @@ class PassService: ObservableObject {
     @Published var guestPassesLimit: Int = 0
     @Published var subscription: Subscription?
     @Published var recentGyms: [RecentGym] = []
+    @Published var isOffline: Bool = false
     
     private let baseURL = "https://api.any-gym.com"
     private var cancellables = Set<AnyCancellable>()
+    private let storageService = PassStorageService()
+    
+    func checkNetworkConnectivity() async -> Bool {
+        guard let url = URL(string: "\(baseURL)/health") else {
+            return false
+        }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse {
+                return httpResponse.statusCode == 200
+            }
+            return false
+        } catch {
+            return false
+        }
+    }
     
     // Store the manager instance (type-erased for availability)
     private var _liveActivityManager: Any?
@@ -2990,43 +3012,61 @@ class PassService: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
-                    self?.isLoading = false
+                    guard let self = self else { return }
+                    self.isLoading = false
+                    
                     if case .failure(let error) = completion {
-                        self?.errorMessage = error.localizedDescription
+                        self.errorMessage = error.localizedDescription
                         print("Error fetching passes: \(error)")
+                        
+                        Task { @MainActor in
+                            self.isOffline = true
+                            let cachedHistory = self.storageService.loadPassHistory()
+                            if !cachedHistory.isEmpty {
+                                self.passHistory = cachedHistory
+                                print("📱 Loaded \(cachedHistory.count) passes from local storage (offline mode)")
+                            }
+                        }
                     }
                 },
                 receiveValue: { [weak self] response in
                     guard let self = self else { return }
                     
-                    // Extract passes
-                    self.passes = response.activePasses ?? []
-                    
-                    // Extract pass history
-                    self.passHistory = response.passHistory ?? []
-                    
-                    // Up to 5 most recently visited gyms (API order)
-                    let recent = response.recentGyms ?? []
-                    self.recentGyms = Array(recent.prefix(5))
-                    
-                    // Extract subscription data
-                    if let subscription = response.subscription {
-                        self.subscription = subscription
-                        self.visitsUsed = subscription.visitsUsed
-                        self.monthlyLimit = subscription.monthlyLimit
-                        self.guestPassesUsed = subscription.guestPassesUsed
-                        self.guestPassesLimit = subscription.guestPassesLimit
+                    Task { @MainActor in
+                        self.isOffline = false
                         
-                        print("Subscription data loaded:")
-                        print("  Tier: \(subscription.tier)")
-                        print("  Visits used: \(subscription.visitsUsed)/\(subscription.monthlyLimit)")
-                        print("  Guest passes: \(subscription.guestPassesUsed)/\(subscription.guestPassesLimit)")
+                        // Extract passes
+                        self.passes = response.activePasses ?? []
+                        
+                        // Extract pass history
+                        self.passHistory = response.passHistory ?? []
+                        
+                        // Up to 5 most recently visited gyms (API order)
+                        let recent = response.recentGyms ?? []
+                        self.recentGyms = Array(recent.prefix(5))
+                        
+                        // Save pass history to local storage
+                        self.storageService.savePassHistory(self.passHistory)
+                        
+                        // Extract subscription data
+                        if let subscription = response.subscription {
+                            self.subscription = subscription
+                            self.visitsUsed = subscription.visitsUsed
+                            self.monthlyLimit = subscription.monthlyLimit
+                            self.guestPassesUsed = subscription.guestPassesUsed
+                            self.guestPassesLimit = subscription.guestPassesLimit
+                            
+                            print("Subscription data loaded:")
+                            print("  Tier: \(subscription.tier)")
+                            print("  Visits used: \(subscription.visitsUsed)/\(subscription.monthlyLimit)")
+                            print("  Guest passes: \(subscription.guestPassesUsed)/\(subscription.guestPassesLimit)")
+                        }
+                        
+                        self.isLoading = false
+                        print("Fetched \(self.passes.count) active passes")
+                        print("Fetched \(self.passHistory.count) historical passes")
+                        print("Fetched \(self.recentGyms.count) recent gyms (max 5)")
                     }
-                    
-                    self.isLoading = false
-                    print("Fetched \(self.passes.count) active passes")
-                    print("Fetched \(self.passHistory.count) historical passes")
-                    print("Fetched \(self.recentGyms.count) recent gyms (max 5)")
                 }
             )
             .store(in: &cancellables)
@@ -3191,8 +3231,18 @@ class PassService: ObservableObject {
         print("   Auth0 ID: \(auth0Id)")
         print("═══════════════════════════════════════════════")
         
+        Task { @MainActor in
+            storageService.checkAndCleanupExpiredActivePass()
+        }
+        
         guard let url = URL(string: "\(baseURL)/user/active_pass") else {
             print("❌ Invalid URL for active pass")
+            Task { @MainActor in
+                if let cachedPass = storageService.loadActivePass() {
+                    self.activePass = cachedPass
+                    print("📱 Loaded active pass from local storage (offline mode)")
+                }
+            }
             return
         }
         
@@ -3235,6 +3285,8 @@ class PassService: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
+                    guard let self = self else { return }
+                    
                     if case .failure(let error) = completion {
                         print("❌ Error fetching active pass: \(error.localizedDescription)")
                         // Retry up to 2 times with increasing delays
@@ -3243,44 +3295,61 @@ class PassService: ObservableObject {
                             Task {
                                 try? await Task.sleep(nanoseconds: UInt64((retryCount + 1) * 1_000_000_000))
                                 await MainActor.run {
-                                    self?.fetchActivePass(auth0Id: auth0Id, retryCount: retryCount + 1)
+                                    self.fetchActivePass(auth0Id: auth0Id, retryCount: retryCount + 1)
                                 }
                             }
                         } else {
-                            print("❌ Max retries reached. Live Activity will not start.")
+                            print("❌ Max retries reached. Falling back to local storage.")
+                            Task { @MainActor in
+                                self.isOffline = true
+                                if let cachedPass = self.storageService.loadActivePass() {
+                                    self.activePass = cachedPass
+                                    print("📱 Loaded active pass from local storage (offline mode)")
+                                }
+                            }
                         }
                     }
                 },
                 receiveValue: { [weak self] pass in
-                    self?.activePass = pass
-                    if let pass = pass {
-                        print("✅ Active pass loaded: \(pass.gymName ?? "Unknown gym")")
-                        print("   Pass ID: \(pass.id)")
-                        print("   Valid Until: \(pass.validUntil ?? "N/A")")
-                        print("   Status: \(pass.status ?? "unknown")")
-                        // Start Live Activity if available
-                        if #available(iOS 16.1, *) {
-                            print("   iOS 16.1+ detected, attempting to start Live Activity...")
-                            self?.startLiveActivityIfAvailable(for: pass)
-                        } else {
-                            print("   ⚠️ iOS version < 16.1, Live Activities not available")
-                        }
-                    } else {
-                        print("ℹ️ No active pass found in response")
-                        // Retry once if no pass found and this is the first attempt
-                        if retryCount == 0 {
-                            print("🔄 Retrying in 2 seconds...")
-                            Task {
-                                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                                await MainActor.run {
-                                    self?.fetchActivePass(auth0Id: auth0Id, retryCount: 1)
-                                }
+                    guard let self = self else { return }
+                    
+                    Task { @MainActor in
+                        self.isOffline = false
+                        self.activePass = pass
+                        
+                        if let pass = pass {
+                            print("✅ Active pass loaded: \(pass.gymName ?? "Unknown gym")")
+                            print("   Pass ID: \(pass.id)")
+                            print("   Valid Until: \(pass.validUntil ?? "N/A")")
+                            print("   Status: \(pass.status ?? "unknown")")
+                            
+                            await self.storageService.saveActivePass(pass, downloadQR: true)
+                            
+                            // Start Live Activity if available
+                            if #available(iOS 16.1, *) {
+                                print("   iOS 16.1+ detected, attempting to start Live Activity...")
+                                self.startLiveActivityIfAvailable(for: pass)
+                            } else {
+                                print("   ⚠️ iOS version < 16.1, Live Activities not available")
                             }
                         } else {
-                            print("ℹ️ No active pass after retry. Ending any existing Live Activity.")
-                            // End Live Activity if no active pass
-                            if #available(iOS 16.1, *) {
-                                self?.endLiveActivityIfAvailable()
+                            print("ℹ️ No active pass found in response")
+                            self.storageService.deleteActivePass()
+                            
+                            // Retry once if no pass found and this is the first attempt
+                            if retryCount == 0 {
+                                print("🔄 Retrying in 2 seconds...")
+                                Task {
+                                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                    await MainActor.run {
+                                        self.fetchActivePass(auth0Id: auth0Id, retryCount: 1)
+                                    }
+                                }
+                            } else {
+                                print("ℹ️ No active pass after retry. Ending any existing Live Activity.")
+                                if #available(iOS 16.1, *) {
+                                    self.endLiveActivityIfAvailable()
+                                }
                             }
                         }
                     }
@@ -4049,6 +4118,24 @@ struct MyPassesView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 24)
                 
+                // Offline indicator
+                if passService.isOffline {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 14))
+                        Text("Viewing cached passes (offline)")
+                            .poppins(.regular, size: 14)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange)
+                    .cornerRadius(12)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
+                }
+                
                 // Main Card
                 VStack(alignment: .leading, spacing: 0) {
                     // Standard Plan Section
@@ -4393,6 +4480,8 @@ private struct RecentPassGymCard: View {
 struct ActivePassCard: View {
     let pass: Pass
     @State private var showDirectionsPicker = false
+    @StateObject private var storageService = PassStorageService()
+    @State private var cachedQRImage: UIImage?
     
     var gymDisplayName: String {
         if let gymName = pass.gymName, !gymName.isEmpty {
@@ -4502,40 +4591,48 @@ struct ActivePassCard: View {
             }
             
             // QR Code with white background
-            if let qrcodeUrl = pass.qrcodeUrl, let url = URL(string: qrcodeUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                            .frame(width: 200, height: 200)
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 200, height: 200)
-                    case .failure:
-                        Image(systemName: "qrcode")
-                            .font(.system(size: 100))
-                            .foregroundColor(.gray)
-                            .frame(width: 200, height: 200)
-                    @unknown default:
-                        EmptyView()
+            VStack {
+                if let cachedImage = cachedQRImage {
+                    // Display cached QR code
+                    Image(uiImage: cachedImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 200, height: 200)
+                } else if let qrcodeUrl = pass.qrcodeUrl, let url = URL(string: qrcodeUrl) {
+                    // Fall back to AsyncImage for online loading
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView()
+                                .frame(width: 200, height: 200)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 200, height: 200)
+                        case .failure:
+                            Image(systemName: "qrcode")
+                                .font(.system(size: 100))
+                                .foregroundColor(.gray)
+                                .frame(width: 200, height: 200)
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
+                } else {
+                    // Fallback QR code placeholder
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 100))
+                        .foregroundColor(.gray)
+                        .frame(width: 200, height: 200)
                 }
-                .padding(16)
-                .background(Color.white)
-                .cornerRadius(12)
-                .frame(maxWidth: .infinity)
-            } else {
-                // Fallback QR code placeholder
-                Image(systemName: "qrcode")
-                    .font(.system(size: 100))
-                    .foregroundColor(.gray)
-                    .frame(width: 200, height: 200)
-                    .padding(16)
-                    .background(Color.white)
-                    .cornerRadius(12)
-                    .frame(maxWidth: .infinity)
+            }
+            .padding(16)
+            .background(Color.white)
+            .cornerRadius(12)
+            .frame(maxWidth: .infinity)
+            .onAppear {
+                loadCachedQRImage()
             }
             
             // Scan instruction
@@ -4605,6 +4702,15 @@ struct ActivePassCard: View {
         .background(Color(red: 0.85, green: 0.95, blue: 0.85)) // Light green background
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 2)
+    }
+    
+    private func loadCachedQRImage() {
+        Task { @MainActor in
+            if let image = storageService.getCachedQRImage(for: pass.id) {
+                cachedQRImage = image
+                print("📱 Loaded cached QR image for pass ID \(pass.id)")
+            }
+        }
     }
     
     private func handleGetDirectionsTap() {
