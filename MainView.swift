@@ -3521,6 +3521,9 @@ struct ExploreView: View {
                     }
                 }
             }
+            .refreshable {
+                articleService.fetchArticles(category: selectedCategory)
+            }
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showFilterSheet) {
                 FilterSheetView(selectedCategory: $selectedCategory, onCategorySelected: { category in
@@ -4362,6 +4365,12 @@ struct MyPassesView: View {
                 }
             }
         }
+        .refreshable {
+            if let auth0Id = authManager.auth0Id {
+                passService.fetchPasses(auth0Id: auth0Id)
+                passService.fetchActivePass(auth0Id: auth0Id)
+            }
+        }
         .background(Color(red: 0.95, green: 0.95, blue: 0.95))
         .overlay {
             if passService.isLoading {
@@ -4377,7 +4386,6 @@ struct MyPassesView: View {
             }
         }
         .onChange(of: authManager.auth0Id) { auth0Id in
-            // Fetch passes when user's auth0_id changes
             if let auth0Id = auth0Id {
                 passService.fetchPasses(auth0Id: auth0Id)
                 passService.fetchActivePass(auth0Id: auth0Id)
@@ -5531,6 +5539,12 @@ struct ProfileView: View {
                         }
                     }
                 }
+                .refreshable {
+                    if let auth0Id = authManager.auth0Id {
+                        authManager.fetchUserData(auth0Id: auth0Id)
+                        passService.fetchPasses(auth0Id: auth0Id)
+                    }
+                }
             }
             .background(Color(red: 0.98, green: 0.98, blue: 0.98))
             .navigationTitle("Profile")
@@ -5554,7 +5568,6 @@ struct ProfileView: View {
                     isPresented: $showChangeSubscription,
                     currentTier: passService.subscription?.tier.lowercased(),
                     onSubscriptionChanged: {
-                        // Refresh subscription data after change
                         if let auth0Id = authManager.auth0Id {
                             passService.fetchPasses(auth0Id: auth0Id)
                         }
@@ -5563,11 +5576,9 @@ struct ProfileView: View {
                 .environmentObject(authManager)
             }
             .onAppear {
-                // Fetch user profile if not loaded
                 if authManager.userProfile == nil, let auth0Id = authManager.auth0Id {
                     authManager.fetchUserData(auth0Id: auth0Id)
                 }
-                // Fetch passes for statistics
                 if let auth0Id = authManager.auth0Id {
                     passService.fetchPasses(auth0Id: auth0Id)
                 }
